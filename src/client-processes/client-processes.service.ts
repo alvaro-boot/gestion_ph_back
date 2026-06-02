@@ -22,6 +22,7 @@ import {
 import { computeStageDueDate } from '../common/date.utils';
 import { Meeting } from '../entities/meeting.entity';
 import { ClientsService } from '../clients/clients.service';
+import { CalendarService } from '../calendar/calendar.service';
 import { isSeguimientoTemplate } from '../common/seguimiento-template';
 
 @Injectable()
@@ -38,6 +39,7 @@ export class ClientProcessesService {
     @InjectRepository(Meeting)
     private readonly meetingRepo: Repository<Meeting>,
     private readonly clientsService: ClientsService,
+    private readonly calendarService: CalendarService,
   ) {}
 
   findAll() {
@@ -309,6 +311,14 @@ export class ClientProcessesService {
     proc.currentStageProgressId = next.id;
     await this.processRepo.save(proc);
     return this.findOne(proc.id);
+  }
+
+  async getHome(year: number, month: number) {
+    const [dashboard, calendar] = await Promise.all([
+      this.getDashboard(),
+      this.calendarService.getBootstrap(year, month),
+    ]);
+    return { dashboard, calendar };
   }
 
   async getDashboard() {

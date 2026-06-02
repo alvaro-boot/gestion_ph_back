@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { ClientProcessesService } from './client-processes.service';
 import { StartProcessDto } from './dto/start-process.dto';
@@ -15,6 +17,19 @@ import { SetCurrentStageDto } from './dto/set-current-stage.dto';
 @Controller('client-processes')
 export class ClientProcessesController {
   constructor(private readonly service: ClientProcessesService) {}
+
+  @Get('home')
+  home(@Query('year') year: string, @Query('month') month: string) {
+    const y = parseInt(year, 10);
+    const m = parseInt(month, 10);
+    if (!Number.isFinite(y) || y < 2000 || y > 2100) {
+      throw new BadRequestException('Año inválido');
+    }
+    if (!Number.isFinite(m) || m < 1 || m > 12) {
+      throw new BadRequestException('Mes inválido');
+    }
+    return this.service.getHome(y, m);
+  }
 
   @Get('dashboard')
   dashboard() {

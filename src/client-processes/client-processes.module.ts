@@ -9,10 +9,12 @@ import { ClientProcessesService } from './client-processes.service';
 import { ClientProcessesController } from './client-processes.controller';
 import { SeguimientoProcessService } from './seguimiento-process.service';
 import { ClientsModule } from '../clients/clients.module';
+import { CalendarModule } from '../calendar/calendar.module';
 
 @Module({
   imports: [
     ClientsModule,
+    CalendarModule,
     TypeOrmModule.forFeature([
       ClientProcess,
       StageProgress,
