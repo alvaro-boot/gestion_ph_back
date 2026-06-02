@@ -25,7 +25,6 @@ export class SeedService implements OnModuleInit {
   async onModuleInit() {
     await this.seedAdmin();
     await this.seedProcessTemplate();
-    await this.seedSeguimientoTemplate();
   }
 
   private async seedAdmin() {
@@ -112,34 +111,5 @@ export class SeedService implements OnModuleInit {
 
     await this.stageRepo.save(stages.map((s) => this.stageRepo.create(s)));
     this.logger.log('Plantilla de ejemplo creada.');
-  }
-
-  private async seedSeguimientoTemplate() {
-    const exists = await this.templateRepo.findOne({
-      where: { name: 'Seguimiento' },
-    });
-    if (exists) return;
-
-    this.logger.log('Creando plantilla Seguimiento (post-onboarding)…');
-
-    const template = await this.templateRepo.save(
-      this.templateRepo.create({
-        name: 'Seguimiento',
-        description:
-          'Reuniones y control con clientes que ya completaron el onboarding.',
-        isDefault: false,
-      }),
-    );
-
-    await this.stageRepo.save(
-      this.stageRepo.create({
-        processTemplateId: template.id,
-        name: 'Seguimiento',
-        description: 'Reuniones de seguimiento y control con el cliente',
-        orderIndex: 0,
-        stageType: StageType.MEETING,
-      }),
-    );
-    this.logger.log('Plantilla Seguimiento creada.');
   }
 }

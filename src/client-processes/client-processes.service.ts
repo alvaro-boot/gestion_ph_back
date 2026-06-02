@@ -21,8 +21,8 @@ import {
 } from '../common/enums';
 import { computeStageDueDate } from '../common/date.utils';
 import { Meeting } from '../entities/meeting.entity';
-import { SeguimientoProcessService } from './seguimiento-process.service';
 import { ClientsService } from '../clients/clients.service';
+import { isSeguimientoTemplate } from '../common/seguimiento-template';
 
 @Injectable()
 export class ClientProcessesService {
@@ -37,7 +37,6 @@ export class ClientProcessesService {
     private readonly clientRepo: Repository<Client>,
     @InjectRepository(Meeting)
     private readonly meetingRepo: Repository<Meeting>,
-    private readonly seguimientoProcess: SeguimientoProcessService,
     private readonly clientsService: ClientsService,
   ) {}
 
@@ -84,6 +83,11 @@ export class ClientProcessesService {
     });
     if (!template) {
       throw new NotFoundException('Plantilla de proceso no encontrada');
+    }
+    if (isSeguimientoTemplate(template)) {
+      throw new BadRequestException(
+        'El seguimiento del cliente se registra en la ficha (llamadas, visitas y notas), no como un proceso aparte.',
+      );
     }
     if (!template.stages?.length) {
       throw new BadRequestException('La plantilla no tiene etapas definidas');
@@ -285,13 +289,6 @@ export class ClientProcessesService {
       proc.completedAt = completed.completedAt;
       proc.currentStageProgressId = null;
       await this.processRepo.save(proc);
-      if (!this.seguimientoProcess.isSeguimientoTemplate(proc.processTemplate)) {
-        try {
-          await this.seguimientoProcess.ensureProcess(proc.clientId);
-        } catch {
-          /* plantilla Seguimiento aún no disponible */
-        }
-      }
       return this.findOne(proc.id);
     }
 

@@ -7,6 +7,7 @@ import { CreateProcessTemplateDto } from './dto/create-process-template.dto';
 import { UpdateProcessTemplateDto } from './dto/update-process-template.dto';
 import { CreateStageDto } from './dto/create-stage.dto';
 import { StageType } from '../common/enums';
+import { isSeguimientoTemplate } from '../common/seguimiento-template';
 
 @Injectable()
 export class ProcessTemplatesService {
@@ -25,7 +26,7 @@ export class ProcessTemplatesService {
     for (const t of templates) {
       t.stages?.sort((a, b) => a.orderIndex - b.orderIndex);
     }
-    return templates;
+    return templates.filter((t) => !isSeguimientoTemplate(t));
   }
 
   async findOne(id: string) {

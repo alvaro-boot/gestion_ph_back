@@ -16,6 +16,7 @@ import {
   FollowUpSummary,
 } from '../common/follow-up-summary';
 import { ClientProcessStatus } from '../common/enums';
+import { isSeguimientoTemplate } from '../common/seguimiento-template';
 
 export interface AuthUserPayload {
   id: string;
@@ -41,12 +42,26 @@ export class ClientsService {
     };
   }
 
-  private clientHasTrackableProcess(client: { processes?: { status: string }[] }) {
+  private clientHasTrackableProcess(client: {
+    processes?: { status: string; processTemplate?: { name: string } }[];
+  }) {
     return client.processes?.some(
       (p) =>
-        p.status === ClientProcessStatus.ACTIVE ||
-        p.status === ClientProcessStatus.COMPLETED,
+        (p.status === ClientProcessStatus.ACTIVE ||
+          p.status === ClientProcessStatus.COMPLETED) &&
+        !isSeguimientoTemplate(p.processTemplate),
     );
+  }
+
+  private withoutSeguimientoProcesses<T extends { processes?: { processTemplate?: { name: string } }[] }>(
+    client: T,
+  ): T {
+    if (client.processes) {
+      client.processes = client.processes.filter(
+        (p) => !isSeguimientoTemplate(p.processTemplate),
+      );
+    }
+    return client;
   }
 
   async findAll() {
@@ -54,7 +69,9 @@ export class ClientsService {
       relations: { processes: { processTemplate: true }, followUps: true },
       order: { createdAt: 'DESC' },
     });
-    return clients.map((c) => this.attachFollowUpSummary(c));
+    return clients.map((c) =>
+      this.attachFollowUpSummary(this.withoutSeguimientoProcesses(c)),
+    );
   }
 
   /** Clientes con mucho tiempo sin seguimiento o próximo contacto vencido. */
@@ -131,7 +148,7 @@ export class ClientsService {
     client.updateLogs?.sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
-    return this.attachFollowUpSummary(client);
+    return this.attachFollowUpSummary(this.withoutSeguimientoProcesses(client));
   }
 
   create(dto: CreateClientDto) {

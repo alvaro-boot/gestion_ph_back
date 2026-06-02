@@ -21,7 +21,7 @@ import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 import { CreateCalendarMeetingDto } from './dto/create-calendar-meeting.dto';
 import { MeetingsService } from '../meetings/meetings.service';
-import { SeguimientoProcessService } from '../client-processes/seguimiento-process.service';
+import { isSeguimientoTemplate } from '../common/seguimiento-template';
 import { ProcessTemplate } from '../entities/process-template.entity';
 
 export type CalendarItemKind = 'meeting' | 'client_delivery' | 'internal_delivery';
@@ -64,7 +64,6 @@ export class CalendarService {
     @InjectRepository(StageProgress)
     private readonly progressRepo: Repository<StageProgress>,
     private readonly meetingsService: MeetingsService,
-    private readonly seguimientoProcess: SeguimientoProcessService,
   ) {}
 
   private mapProcessToPickerOption(
@@ -126,8 +125,7 @@ export class CalendarService {
       ...meetings.map((m) => {
         const template = m.stageProgress?.clientProcess?.processTemplate;
         const processKind =
-          template &&
-          this.seguimientoProcess.isSeguimientoTemplate(template as ProcessTemplate)
+          template && isSeguimientoTemplate(template as ProcessTemplate)
             ? ('seguimiento' as const)
             : ('onboarding' as const);
         return {
@@ -221,10 +219,13 @@ export class CalendarService {
     return this.meetingsService.updateStatus(id, MeetingStatus.CANCELLED);
   }
 
-  /** Procesos activos (onboarding + seguimiento) para agendar reuniones. */
+  /** Procesos de onboarding (activos o completados) para agendar reuniones. */
   async getPickerOptions(): Promise<CalendarPickerOption[]> {
     const processes = await this.processRepo.find({
-      where: { status: ClientProcessStatus.ACTIVE },
+      where: [
+        { status: ClientProcessStatus.ACTIVE },
+        { status: ClientProcessStatus.COMPLETED },
+      ],
       relations: {
         client: true,
         processTemplate: true,
@@ -232,37 +233,9 @@ export class CalendarService {
       },
     });
 
-    const options: CalendarPickerOption[] = processes.map((p) =>
-      this.mapProcessToPickerOption(
-        p,
-        this.seguimientoProcess.isSeguimientoTemplate(p.processTemplate)
-          ? 'seguimiento'
-          : 'onboarding',
-      ),
-    );
-
-    const onboardingCompleted = await this.processRepo
-      .createQueryBuilder('cp')
-      .innerJoin('cp.processTemplate', 'pt')
-      .where('cp.status = :completed', {
-        completed: ClientProcessStatus.COMPLETED,
-      })
-      .andWhere('LOWER(pt.name) != :seg', { seg: 'seguimiento' })
-      .select('DISTINCT cp.clientId', 'clientId')
-      .getRawMany<{ clientId: string }>();
-
-    for (const row of onboardingCompleted) {
-      const hasSeguimiento = options.some(
-        (o) => o.clientId === row.clientId && o.processKind === 'seguimiento',
-      );
-      if (hasSeguimiento) continue;
-      try {
-        const proc = await this.seguimientoProcess.ensureProcess(row.clientId);
-        options.push(this.mapProcessToPickerOption(proc, 'seguimiento'));
-      } catch {
-        /* plantilla seguimiento no lista o cliente sin onboarding */
-      }
-    }
+    const options: CalendarPickerOption[] = processes
+      .filter((p) => !isSeguimientoTemplate(p.processTemplate))
+      .map((p) => this.mapProcessToPickerOption(p, 'onboarding'));
 
     return options.sort((a, b) =>
       a.clientName.localeCompare(b.clientName, 'es'),

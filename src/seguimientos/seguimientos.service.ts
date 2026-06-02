@@ -10,6 +10,7 @@ import { Client } from '../entities/client.entity';
 import { ClientProcess } from '../entities/client-process.entity';
 import { CreateSeguimientoDto } from './dto/create-seguimiento.dto';
 import { ClientProcessStatus, FollowUpType } from '../common/enums';
+import { isSeguimientoTemplate } from '../common/seguimiento-template';
 
 @Injectable()
 export class SeguimientosService {
@@ -23,13 +24,17 @@ export class SeguimientosService {
   ) {}
 
   private async assertCanRegisterFollowUp(clientId: string) {
-    const hasProcess = await this.processRepo.exists({
-      where: [
-        { clientId, status: ClientProcessStatus.ACTIVE },
-        { clientId, status: ClientProcessStatus.COMPLETED },
-      ],
+    const processes = await this.processRepo.find({
+      where: { clientId },
+      relations: { processTemplate: true },
     });
-    if (!hasProcess) {
+    const hasOnboarding = processes.some(
+      (p) =>
+        (p.status === ClientProcessStatus.ACTIVE ||
+          p.status === ClientProcessStatus.COMPLETED) &&
+        !isSeguimientoTemplate(p.processTemplate),
+    );
+    if (!hasOnboarding) {
       throw new BadRequestException(
         'El cliente debe tener un proceso de onboarding iniciado para registrar seguimientos.',
       );
@@ -56,9 +61,15 @@ export class SeguimientosService {
     if (dto.clientProcessId) {
       const proc = await this.processRepo.findOne({
         where: { id: dto.clientProcessId, clientId: dto.clientId },
+        relations: { processTemplate: true },
       });
       if (!proc) {
         throw new NotFoundException('Proceso del cliente no encontrado');
+      }
+      if (isSeguimientoTemplate(proc.processTemplate)) {
+        throw new BadRequestException(
+          'Vincula el seguimiento al proceso de onboarding, no a un proceso «Seguimiento».',
+        );
       }
       if (
         proc.status !== ClientProcessStatus.COMPLETED &&
