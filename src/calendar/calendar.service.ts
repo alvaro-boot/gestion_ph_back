@@ -20,6 +20,7 @@ import {
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 import { CreateCalendarMeetingDto } from './dto/create-calendar-meeting.dto';
+import { UpdateMeetingDto } from '../meetings/dto/update-meeting.dto';
 import { MeetingsService } from '../meetings/meetings.service';
 import { isSeguimientoTemplate } from '../common/seguimiento-template';
 import { ProcessTemplate } from '../entities/process-template.entity';
@@ -40,6 +41,8 @@ export interface CalendarMonthItem {
   stageProgressId?: string | null;
   description?: string | null;
   processKind?: 'onboarding' | 'seguimiento';
+  notes?: string | null;
+  completionNotes?: string | null;
 }
 
 export interface CalendarPickerOption {
@@ -129,6 +132,7 @@ export class CalendarService {
           processId: m.stageProgress?.clientProcess?.id ?? null,
           stageProgressId: m.stageProgressId,
           processKind,
+          notes: m.notes,
         };
       }),
       ...deliveries.map((e) => ({
@@ -144,6 +148,7 @@ export class CalendarService {
         clientName: e.client?.name ?? '—',
         processId: e.clientProcessId,
         description: e.description,
+        completionNotes: e.completionNotes,
       })),
     ];
 
@@ -180,10 +185,33 @@ export class CalendarService {
     const event = await this.eventRepo.findOne({ where: { id } });
     if (!event) throw new NotFoundException('Entrega no encontrada');
 
+    if (event.status === CalendarEventStatus.CANCELLED) {
+      throw new BadRequestException('Esta entrega ya fue cancelada.');
+    }
+    if (
+      event.status === CalendarEventStatus.COMPLETED &&
+      dto.status !== CalendarEventStatus.CANCELLED
+    ) {
+      throw new BadRequestException('Esta entrega ya fue terminada.');
+    }
+
     if (dto.title !== undefined) event.title = dto.title;
     if (dto.description !== undefined) event.description = dto.description ?? null;
     if (dto.dueAt !== undefined) event.dueAt = new Date(dto.dueAt);
-    if (dto.status !== undefined) event.status = dto.status;
+    if (dto.completionNotes !== undefined) {
+      event.completionNotes = dto.completionNotes ?? null;
+    }
+    if (dto.status !== undefined) {
+      if (
+        dto.status === CalendarEventStatus.COMPLETED &&
+        !dto.completionNotes?.trim()
+      ) {
+        throw new BadRequestException(
+          'Indica notas al marcar la entrega como terminada.',
+        );
+      }
+      event.status = dto.status;
+    }
 
     return this.eventRepo.save(event);
   }
@@ -207,6 +235,10 @@ export class CalendarService {
 
   async cancelMeeting(id: string) {
     return this.meetingsService.updateStatus(id, MeetingStatus.CANCELLED);
+  }
+
+  updateMeeting(id: string, dto: UpdateMeetingDto) {
+    return this.meetingsService.update(id, dto);
   }
 
   /** Procesos de onboarding (activos o completados) para agendar reuniones. */

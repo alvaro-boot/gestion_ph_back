@@ -13,6 +13,7 @@ import { CalendarService } from './calendar.service';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 import { CreateCalendarMeetingDto } from './dto/create-calendar-meeting.dto';
+import { UpdateMeetingDto } from '../meetings/dto/update-meeting.dto';
 
 @Controller('calendar')
 export class CalendarController {
@@ -72,5 +73,10 @@ export class CalendarController {
   @Post('meetings/:id/cancel')
   cancelMeeting(@Param('id') id: string) {
     return this.service.cancelMeeting(id);
+  }
+
+  @Patch('meetings/:id')
+  updateMeeting(@Param('id') id: string, @Body() dto: UpdateMeetingDto) {
+    return this.service.updateMeeting(id, dto);
   }
 }

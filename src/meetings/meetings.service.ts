@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 import { Meeting } from '../entities/meeting.entity';
 import { StageProgress } from '../entities/stage-progress.entity';
 import { CreateMeetingDto } from './dto/create-meeting.dto';
+import { UpdateMeetingDto } from './dto/update-meeting.dto';
 import { MeetingStatus } from '../common/enums';
 
 @Injectable()
@@ -84,6 +85,34 @@ export class MeetingsService {
     const meeting = await this.meetingRepo.findOne({ where: { id } });
     if (!meeting) throw new NotFoundException('Reunión no encontrada');
     meeting.status = status;
+    return this.meetingRepo.save(meeting);
+  }
+
+  async update(id: string, dto: UpdateMeetingDto) {
+    const meeting = await this.meetingRepo.findOne({ where: { id } });
+    if (!meeting) throw new NotFoundException('Reunión no encontrada');
+
+    if (meeting.status === MeetingStatus.CANCELLED) {
+      throw new BadRequestException('Esta reunión ya fue cancelada.');
+    }
+    if (meeting.status === MeetingStatus.COMPLETED && dto.status !== MeetingStatus.CANCELLED) {
+      throw new BadRequestException('Esta reunión ya fue terminada.');
+    }
+
+    if (dto.title !== undefined) meeting.title = dto.title;
+    if (dto.scheduledAt !== undefined) {
+      meeting.scheduledAt = new Date(dto.scheduledAt);
+    }
+    if (dto.notes !== undefined) meeting.notes = dto.notes ?? null;
+    if (dto.status !== undefined) {
+      if (dto.status === MeetingStatus.COMPLETED && !dto.notes?.trim()) {
+        throw new BadRequestException(
+          'Indica notas al marcar la reunión como terminada.',
+        );
+      }
+      meeting.status = dto.status;
+    }
+
     return this.meetingRepo.save(meeting);
   }
 }

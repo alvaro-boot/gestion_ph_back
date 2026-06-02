@@ -12,6 +12,10 @@ export class UpdateCalendarEventDto {
   description?: string;
 
   @IsOptional()
+  @IsString()
+  completionNotes?: string;
+
+  @IsOptional()
   @IsDateString()
   dueAt?: string;
 

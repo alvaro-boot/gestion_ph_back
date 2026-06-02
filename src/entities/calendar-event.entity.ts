@@ -38,6 +38,9 @@ export class CalendarEvent {
   @Column({ type: 'text', nullable: true })
   description: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  completionNotes: string | null;
+
   @Column({ type: 'datetime' })
   dueAt: Date;
 
