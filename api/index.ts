@@ -10,7 +10,9 @@ async function bootstrapServer() {
   if (cachedExpressApp) return cachedExpressApp;
 
   const expressApp = express();
-  const app = await NestFactory.create(AppModule, new ExpressAdapter(expressApp));
+  const app = await NestFactory.create(AppModule, new ExpressAdapter(expressApp), {
+    logger: ['error', 'warn'],
+  });
 
   app.setGlobalPrefix('api');
   app.enableCors({

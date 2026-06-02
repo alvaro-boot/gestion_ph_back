@@ -312,9 +312,43 @@ export class ClientProcessesService {
   }
 
   async getDashboard() {
-    const processes = await this.findAll();
     const now = new Date();
-    const active = processes.filter((p) => p.status === ClientProcessStatus.ACTIVE);
+
+    const [
+      activeProcesses,
+      totalClients,
+      completedProcesses,
+      followUpAlerts,
+      meetings,
+    ] = await Promise.all([
+      this.processRepo.find({
+        where: { status: ClientProcessStatus.ACTIVE },
+        relations: {
+          client: true,
+          processTemplate: true,
+          stageProgresses: { stageTemplate: true },
+        },
+      }),
+      this.clientRepo.count(),
+      this.processRepo.count({
+        where: { status: ClientProcessStatus.COMPLETED },
+      }),
+      this.clientsService.getFollowUpAlerts(30, 12),
+      this.meetingRepo
+        .createQueryBuilder('m')
+        .innerJoinAndSelect('m.stageProgress', 'sp')
+        .innerJoinAndSelect('sp.clientProcess', 'cp')
+        .innerJoinAndSelect('cp.client', 'client')
+        .where('m.status = :status', { status: MeetingStatus.SCHEDULED })
+        .andWhere('m.scheduledAt >= :now', { now })
+        .orderBy('m.scheduledAt', 'ASC')
+        .take(8)
+        .getMany(),
+    ]);
+
+    const active = activeProcesses.filter(
+      (p) => !isSeguimientoTemplate(p.processTemplate),
+    );
 
     const overdue: Array<{
       clientName: string;
@@ -323,24 +357,12 @@ export class ClientProcessesService {
       dueDate: Date;
     }> = [];
 
-    const meetings = await this.meetingRepo.find({
-      where: { status: MeetingStatus.SCHEDULED },
-      relations: {
-        stageProgress: {
-          clientProcess: { client: true },
-        },
-      },
-      order: { scheduledAt: 'ASC' },
-      take: 8,
-    });
-    const upcomingMeetings = meetings
-      .filter((m) => new Date(m.scheduledAt) >= now)
-      .map((m) => ({
-        id: m.id,
-        title: m.title,
-        scheduledAt: m.scheduledAt,
-        clientName: m.stageProgress?.clientProcess?.client?.name ?? '—',
-      }));
+    const upcomingMeetings = meetings.map((m) => ({
+      id: m.id,
+      title: m.title,
+      scheduledAt: m.scheduledAt,
+      clientName: m.stageProgress?.clientProcess?.client?.name ?? '—',
+    }));
 
     for (const proc of active) {
       const current = proc.stageProgresses?.find(
@@ -355,8 +377,6 @@ export class ClientProcessesService {
         });
       }
     }
-
-    const followUpAlerts = await this.clientsService.getFollowUpAlerts(30, 12);
 
     const stageMap = new Map<
       string,
@@ -422,11 +442,9 @@ export class ClientProcessesService {
 
     return {
       stats: {
-        totalClients: await this.clientRepo.count(),
+        totalClients,
         activeProcesses: active.length,
-        completedProcesses: processes.filter(
-          (p) => p.status === ClientProcessStatus.COMPLETED,
-        ).length,
+        completedProcesses,
         overdueStages: overdue.length,
         needsFollowUp: followUpAlerts.length,
       },

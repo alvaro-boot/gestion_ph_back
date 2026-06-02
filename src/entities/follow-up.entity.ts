@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -11,6 +12,7 @@ import { ClientProcess } from './client-process.entity';
 import { FollowUpType } from '../common/enums';
 
 @Entity('seguimientos')
+@Index(['clientId', 'occurredAt'])
 export class FollowUp {
   @PrimaryGeneratedColumn('uuid')
   id: string;

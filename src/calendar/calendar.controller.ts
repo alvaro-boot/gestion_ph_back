@@ -18,6 +18,19 @@ import { CreateCalendarMeetingDto } from './dto/create-calendar-meeting.dto';
 export class CalendarController {
   constructor(private readonly service: CalendarService) {}
 
+  @Get('bootstrap')
+  bootstrap(@Query('year') year: string, @Query('month') month: string) {
+    const y = parseInt(year, 10);
+    const m = parseInt(month, 10);
+    if (!Number.isFinite(y) || y < 2000 || y > 2100) {
+      throw new BadRequestException('Año inválido');
+    }
+    if (!Number.isFinite(m) || m < 1 || m > 12) {
+      throw new BadRequestException('Mes inválido');
+    }
+    return this.service.getBootstrap(y, m);
+  }
+
   @Get()
   month(@Query('year') year: string, @Query('month') month: string) {
     const y = parseInt(year, 10);

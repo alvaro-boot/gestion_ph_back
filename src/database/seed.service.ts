@@ -23,6 +23,10 @@ export class SeedService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    const enabled =
+      this.config.get<string>('DB_SEED_ON_STARTUP', 'false') === 'true';
+    if (!enabled) return;
+
     await this.seedAdmin();
     await this.seedProcessTemplate();
   }

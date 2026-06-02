@@ -1,7 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Client } from '../entities/client.entity';
+import { ClientProcess } from '../entities/client-process.entity';
+import { FollowUp } from '../entities/follow-up.entity';
 import { ClientUpdateLog, ClientFieldChange } from '../entities/client-update-log.entity';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
@@ -24,14 +26,35 @@ export interface AuthUserPayload {
   email: string;
 }
 
+/** Clientes mínimos para formularios del calendario (sin follow-ups ni historial). */
+export interface CalendarClientOption {
+  id: string;
+  name: string;
+  processes: { id: string; name: string }[];
+}
+
 @Injectable()
 export class ClientsService {
   constructor(
     @InjectRepository(Client)
     private readonly clientRepo: Repository<Client>,
+    @InjectRepository(ClientProcess)
+    private readonly processRepo: Repository<ClientProcess>,
+    @InjectRepository(FollowUp)
+    private readonly followUpRepo: Repository<FollowUp>,
     @InjectRepository(ClientUpdateLog)
     private readonly updateLogRepo: Repository<ClientUpdateLog>,
   ) {}
+
+  private groupFollowUpsByClient(followUps: FollowUp[]) {
+    const map = new Map<string, FollowUp[]>();
+    for (const fu of followUps) {
+      const list = map.get(fu.clientId) ?? [];
+      list.push(fu);
+      map.set(fu.clientId, list);
+    }
+    return map;
+  }
 
   private attachFollowUpSummary<T extends { followUps?: import('../entities/follow-up.entity').FollowUp[] }>(
     client: T,
@@ -65,27 +88,96 @@ export class ClientsService {
   }
 
   async findAll() {
-    const clients = await this.clientRepo.find({
-      relations: { processes: { processTemplate: true }, followUps: true },
-      order: { createdAt: 'DESC' },
-    });
+    const [clients, followUps] = await Promise.all([
+      this.clientRepo.find({
+        relations: { processes: { processTemplate: true } },
+        order: { createdAt: 'DESC' },
+      }),
+      this.followUpRepo.find({
+        select: {
+          id: true,
+          clientId: true,
+          occurredAt: true,
+          nextActionAt: true,
+        },
+        order: { occurredAt: 'DESC' },
+      }),
+    ]);
+    const followUpsByClient = this.groupFollowUpsByClient(followUps);
+
     return clients.map((c) =>
-      this.attachFollowUpSummary(this.withoutSeguimientoProcesses(c)),
+      this.attachFollowUpSummary({
+        ...this.withoutSeguimientoProcesses(c),
+        followUps: followUpsByClient.get(c.id) ?? [],
+      }),
     );
+  }
+
+  async findForCalendar(): Promise<CalendarClientOption[]> {
+    const clients = await this.clientRepo.find({
+      relations: { processes: { processTemplate: true } },
+      select: {
+        id: true,
+        name: true,
+        processes: {
+          id: true,
+          processTemplate: { name: true },
+        },
+      },
+      order: { name: 'ASC' },
+    });
+
+    return clients.map((c) => {
+      const filtered = this.withoutSeguimientoProcesses(c);
+      return {
+        id: c.id,
+        name: c.name,
+        processes:
+          filtered.processes?.map((p) => ({
+            id: p.id,
+            name: p.processTemplate?.name ?? 'Proceso',
+          })) ?? [],
+      };
+    });
   }
 
   /** Clientes con mucho tiempo sin seguimiento o próximo contacto vencido. */
   async getFollowUpAlerts(staleDays = 30, limit = 15): Promise<FollowUpAlertRow[]> {
-    const clients = await this.clientRepo.find({
-      relations: { processes: { processTemplate: true }, followUps: true },
-    });
+    const trackableRows = await this.processRepo
+      .createQueryBuilder('cp')
+      .innerJoin('cp.processTemplate', 'pt')
+      .select('DISTINCT cp.clientId', 'clientId')
+      .where('cp.status IN (:...statuses)', {
+        statuses: [ClientProcessStatus.ACTIVE, ClientProcessStatus.COMPLETED],
+      })
+      .andWhere('LOWER(TRIM(pt.name)) != :seg', { seg: 'seguimiento' })
+      .getRawMany<{ clientId: string }>();
+
+    const clientIds = trackableRows.map((r) => r.clientId);
+    if (!clientIds.length) return [];
+
+    const [clients, followUps] = await Promise.all([
+      this.clientRepo.find({
+        where: { id: In(clientIds) },
+        select: { id: true, name: true, company: true },
+      }),
+      this.followUpRepo.find({
+        where: { clientId: In(clientIds) },
+        select: {
+          id: true,
+          clientId: true,
+          occurredAt: true,
+          nextActionAt: true,
+        },
+        order: { occurredAt: 'DESC' },
+      }),
+    ]);
+    const followUpsByClient = this.groupFollowUpsByClient(followUps);
 
     const rows: FollowUpAlertRow[] = [];
 
     for (const client of clients) {
-      if (!this.clientHasTrackableProcess(client)) continue;
-
-      const summary = buildFollowUpSummary(client.followUps);
+      const summary = buildFollowUpSummary(followUpsByClient.get(client.id) ?? []);
       const stale =
         summary.daysSinceLastFollowUp === null ||
         summary.daysSinceLastFollowUp >= staleDays;
@@ -122,11 +214,7 @@ export class ClientsService {
       relations: {
         processes: {
           processTemplate: true,
-          stageProgresses: {
-            stageTemplate: true,
-            meetings: true,
-            tasks: true,
-          },
+          stageProgresses: { stageTemplate: true },
         },
         followUps: {
           clientProcess: { processTemplate: true },

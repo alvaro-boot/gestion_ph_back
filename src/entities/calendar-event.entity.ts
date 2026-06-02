@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -11,6 +12,7 @@ import { ClientProcess } from './client-process.entity';
 import { CalendarEventStatus, CalendarEventType } from '../common/enums';
 
 @Entity('calendar_events')
+@Index(['status', 'dueAt'])
 export class CalendarEvent {
   @PrimaryGeneratedColumn('uuid')
   id: string;

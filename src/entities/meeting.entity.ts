@@ -1,8 +1,9 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { StageProgress } from './stage-progress.entity';
 import { MeetingStatus } from '../common/enums';
 
 @Entity('meetings')
+@Index(['status', 'scheduledAt'])
 export class Meeting {
   @PrimaryGeneratedColumn('uuid')
   id: string;

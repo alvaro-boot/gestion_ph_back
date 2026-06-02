@@ -23,6 +23,8 @@ import { CreateCalendarMeetingDto } from './dto/create-calendar-meeting.dto';
 import { MeetingsService } from '../meetings/meetings.service';
 import { isSeguimientoTemplate } from '../common/seguimiento-template';
 import { ProcessTemplate } from '../entities/process-template.entity';
+import { ClientsService } from '../clients/clients.service';
+import { In } from 'typeorm';
 
 export type CalendarItemKind = 'meeting' | 'client_delivery' | 'internal_delivery';
 
@@ -64,28 +66,16 @@ export class CalendarService {
     @InjectRepository(StageProgress)
     private readonly progressRepo: Repository<StageProgress>,
     private readonly meetingsService: MeetingsService,
+    private readonly clientsService: ClientsService,
   ) {}
 
-  private mapProcessToPickerOption(
-    p: ClientProcess,
-    processKind: 'onboarding' | 'seguimiento',
-  ): CalendarPickerOption {
-    p.stageProgresses?.sort(
-      (a, b) => a.stageTemplate.orderIndex - b.stageTemplate.orderIndex,
-    );
-    const current = p.stageProgresses?.find(
-      (sp) => sp.status === StageProgressStatus.IN_PROGRESS,
-    );
-    return {
-      processId: p.id,
-      clientId: p.clientId,
-      clientName: p.client?.name ?? '—',
-      templateName: p.processTemplate?.name ?? 'Proceso',
-      processKind,
-      currentStageProgressId:
-        current?.id ?? p.stageProgresses?.[0]?.id ?? null,
-      currentStageName: current?.stageTemplate?.name ?? null,
-    };
+  async getBootstrap(year: number, month: number) {
+    const [items, pickerOptions, clients] = await Promise.all([
+      this.getMonth(year, month),
+      this.getPickerOptions(),
+      this.clientsService.findForCalendar(),
+    ]);
+    return { items, pickerOptions, clients };
   }
 
   async getMonth(year: number, month: number) {
@@ -95,31 +85,31 @@ export class CalendarService {
     const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
     const end = new Date(year, month, 0, 23, 59, 59, 999);
 
-    const meetings = await this.meetingRepo
-      .createQueryBuilder('m')
-      .leftJoinAndSelect('m.stageProgress', 'sp')
-      .leftJoinAndSelect('sp.clientProcess', 'cp')
-      .leftJoinAndSelect('cp.client', 'client')
-      .leftJoinAndSelect('cp.processTemplate', 'processTemplate')
-      .where('m.scheduledAt >= :start', { start })
-      .andWhere('m.scheduledAt <= :end', { end })
-      .andWhere('m.status != :cancelled', {
-        cancelled: MeetingStatus.CANCELLED,
-      })
-      .orderBy('m.scheduledAt', 'ASC')
-      .getMany();
-
-    const deliveries = await this.eventRepo
-      .createQueryBuilder('e')
-      .leftJoinAndSelect('e.client', 'client')
-      .leftJoinAndSelect('e.clientProcess', 'cp')
-      .where('e.dueAt >= :start', { start })
-      .andWhere('e.dueAt <= :end', { end })
-      .andWhere('e.status != :cancelled', {
-        cancelled: CalendarEventStatus.CANCELLED,
-      })
-      .orderBy('e.dueAt', 'ASC')
-      .getMany();
+    const [meetings, deliveries] = await Promise.all([
+      this.meetingRepo
+        .createQueryBuilder('m')
+        .innerJoinAndSelect('m.stageProgress', 'sp')
+        .innerJoinAndSelect('sp.clientProcess', 'cp')
+        .innerJoinAndSelect('cp.client', 'client')
+        .innerJoinAndSelect('cp.processTemplate', 'processTemplate')
+        .where('m.scheduledAt >= :start', { start })
+        .andWhere('m.scheduledAt <= :end', { end })
+        .andWhere('m.status != :cancelled', {
+          cancelled: MeetingStatus.CANCELLED,
+        })
+        .orderBy('m.scheduledAt', 'ASC')
+        .getMany(),
+      this.eventRepo
+        .createQueryBuilder('e')
+        .innerJoinAndSelect('e.client', 'client')
+        .where('e.dueAt >= :start', { start })
+        .andWhere('e.dueAt <= :end', { end })
+        .andWhere('e.status != :cancelled', {
+          cancelled: CalendarEventStatus.CANCELLED,
+        })
+        .orderBy('e.dueAt', 'ASC')
+        .getMany(),
+    ]);
 
     const items: CalendarMonthItem[] = [
       ...meetings.map((m) => {
@@ -221,24 +211,60 @@ export class CalendarService {
 
   /** Procesos de onboarding (activos o completados) para agendar reuniones. */
   async getPickerOptions(): Promise<CalendarPickerOption[]> {
-    const processes = await this.processRepo.find({
-      where: [
-        { status: ClientProcessStatus.ACTIVE },
-        { status: ClientProcessStatus.COMPLETED },
-      ],
-      relations: {
-        client: true,
-        processTemplate: true,
-        stageProgresses: { stageTemplate: true },
+    const processes = await this.processRepo
+      .createQueryBuilder('cp')
+      .innerJoinAndSelect('cp.client', 'client')
+      .innerJoinAndSelect('cp.processTemplate', 'pt')
+      .where('cp.status IN (:...statuses)', {
+        statuses: [ClientProcessStatus.ACTIVE, ClientProcessStatus.COMPLETED],
+      })
+      .andWhere('LOWER(TRIM(pt.name)) != :seg', {
+        seg: 'seguimiento',
+      })
+      .orderBy('client.name', 'ASC')
+      .getMany();
+
+    if (!processes.length) return [];
+
+    const processIds = processes.map((p) => p.id);
+
+    const inProgressStages = await this.progressRepo.find({
+      where: {
+        clientProcessId: In(processIds),
+        status: StageProgressStatus.IN_PROGRESS,
       },
+      relations: { stageTemplate: true },
     });
-
-    const options: CalendarPickerOption[] = processes
-      .filter((p) => !isSeguimientoTemplate(p.processTemplate))
-      .map((p) => this.mapProcessToPickerOption(p, 'onboarding'));
-
-    return options.sort((a, b) =>
-      a.clientName.localeCompare(b.clientName, 'es'),
+    const stageByProcess = new Map(
+      inProgressStages.map((sp) => [sp.clientProcessId, sp]),
     );
+
+    const missingIds = processIds.filter((id) => !stageByProcess.has(id));
+    if (missingIds.length > 0) {
+      const fallbackStages = await this.progressRepo
+        .createQueryBuilder('sp')
+        .innerJoinAndSelect('sp.stageTemplate', 'st')
+        .where('sp.clientProcessId IN (:...ids)', { ids: missingIds })
+        .orderBy('st.orderIndex', 'DESC')
+        .getMany();
+      for (const sp of fallbackStages) {
+        if (!stageByProcess.has(sp.clientProcessId)) {
+          stageByProcess.set(sp.clientProcessId, sp);
+        }
+      }
+    }
+
+    return processes.map((p) => {
+      const sp = stageByProcess.get(p.id);
+      return {
+        processId: p.id,
+        clientId: p.clientId,
+        clientName: p.client?.name ?? '—',
+        templateName: p.processTemplate?.name ?? 'Proceso',
+        processKind: 'onboarding' as const,
+        currentStageProgressId: sp?.id ?? null,
+        currentStageName: sp?.stageTemplate?.name ?? null,
+      };
+    });
   }
 }

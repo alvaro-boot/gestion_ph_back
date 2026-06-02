@@ -8,7 +8,7 @@ import { StageProgress } from '../entities/stage-progress.entity';
 import { CalendarService } from './calendar.service';
 import { CalendarController } from './calendar.controller';
 import { MeetingsModule } from '../meetings/meetings.module';
-import { ClientProcessesModule } from '../client-processes/client-processes.module';
+import { ClientsModule } from '../clients/clients.module';
 
 @Module({
   imports: [
@@ -20,7 +20,7 @@ import { ClientProcessesModule } from '../client-processes/client-processes.modu
       StageProgress,
     ]),
     MeetingsModule,
-    ClientProcessesModule,
+    ClientsModule,
   ],
   controllers: [CalendarController],
   providers: [CalendarService],

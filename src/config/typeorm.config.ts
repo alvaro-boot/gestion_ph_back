@@ -14,6 +14,9 @@ export function typeOrmConfig(config: ConfigService): TypeOrmModuleOptions {
     synchronize: config.get<string>('DB_SYNCHRONIZE', 'true') === 'true',
     charset: 'utf8mb4',
     timezone: 'Z',
-    connectTimeout: 30000,
+    connectTimeout: 10000,
+    extra: {
+      connectionLimit: 3,
+    },
   };
 }
