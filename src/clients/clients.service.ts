@@ -459,6 +459,18 @@ export class ClientsService {
     };
   }
 
+  async findConjuntoPicker() {
+    const rows = await this.clientRepo.find({
+      select: { id: true, name: true, company: true },
+      order: { name: 'ASC' },
+    });
+    return rows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      company: c.company,
+    }));
+  }
+
   async getConjuntoReport(clientId: string): Promise<ConjuntoReport> {
     const client = await this.clientRepo.findOne({
       where: { id: clientId },
