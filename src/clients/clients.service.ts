@@ -16,7 +16,18 @@ import {
   buildFollowUpSummary,
   FollowUpAlertRow,
   FollowUpSummary,
+  isNextActionFulfilled,
 } from '../common/follow-up-summary';
+import {
+  ConjuntoReport,
+  ConjuntoReportDelivery,
+  ConjuntoReportFollowUp,
+  ConjuntoReportMeeting,
+  ConjuntoReportNextContact,
+  ConjuntoReportProcess,
+  ConjuntoReportStage,
+} from './conjunto-report.types';
+import { FollowUpType, StageProgressStatus } from '../common/enums';
 import {
   CalendarEventStatus,
   ClientProcessStatus,
@@ -412,5 +423,247 @@ export class ClientsService {
     const client = await this.findOne(id);
     await this.clientRepo.remove(client);
     return { deleted: true };
+  }
+
+  private stageDurationLabel(stage: {
+    durationDays?: number | null;
+    minDurationDays?: number | null;
+    maxDurationDays?: number | null;
+    formDeadlineDays?: number | null;
+  }): string {
+    if (stage.formDeadlineDays) {
+      return `${stage.formDeadlineDays} días calendario (formulario)`;
+    }
+    if (stage.durationDays) return `${stage.durationDays} días`;
+    if (stage.minDurationDays && stage.maxDurationDays) {
+      return `${stage.minDurationDays}–${stage.maxDurationDays} días`;
+    }
+    if (stage.minDurationDays) return `mín. ${stage.minDurationDays} días`;
+    return 'Sin plazo definido';
+  }
+
+  private mapFollowUpRow(
+    fu: FollowUp,
+    stageName: string | null,
+  ): ConjuntoReportFollowUp {
+    return {
+      id: fu.id,
+      title: fu.title,
+      description: fu.description,
+      followUpType: fu.followUpType,
+      occurredAt: new Date(fu.occurredAt).toISOString(),
+      nextActionAt: fu.nextActionAt
+        ? new Date(fu.nextActionAt).toISOString()
+        : null,
+      stageName,
+    };
+  }
+
+  async getConjuntoReport(clientId: string): Promise<ConjuntoReport> {
+    const client = await this.clientRepo.findOne({
+      where: { id: clientId },
+      relations: {
+        processes: {
+          processTemplate: true,
+          stageProgresses: { stageTemplate: true },
+        },
+        followUps: {
+          clientProcess: { processTemplate: true },
+        },
+      },
+    });
+    if (!client) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    const processes = (client.processes ?? []).filter(
+      (p) => !isSeguimientoTemplate(p.processTemplate),
+    );
+    for (const proc of processes) {
+      proc.stageProgresses?.sort(
+        (a, b) => a.stageTemplate.orderIndex - b.stageTemplate.orderIndex,
+      );
+    }
+
+    const followUps = [...(client.followUps ?? [])].sort(
+      (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
+    );
+
+    const fulfilledByClient = await this.getFulfilledDatesByClient([clientId]);
+    const fulfilled = fulfilledByClient.get(clientId) ?? [];
+    const followUpSummary = buildFollowUpSummary(followUps, fulfilled);
+    const now = new Date();
+
+    const stageNameForFollowUp = (fu: FollowUp): string | null => {
+      if (!fu.clientProcessId) return null;
+      const proc = processes.find((p) => p.id === fu.clientProcessId);
+      if (!proc) return fu.clientProcess?.processTemplate?.name ?? null;
+      const current = proc.currentStageProgressId
+        ? proc.stageProgresses?.find((sp) => sp.id === proc.currentStageProgressId)
+        : proc.stageProgresses?.find(
+            (sp) => sp.status === StageProgressStatus.IN_PROGRESS,
+          );
+      return current?.stageTemplate?.name ?? proc.processTemplate?.name ?? null;
+    };
+
+    const lastFollowUp = followUps[0]
+      ? this.mapFollowUpRow(followUps[0], stageNameForFollowUp(followUps[0]))
+      : null;
+
+    const recentFollowUps = followUps
+      .slice(0, 8)
+      .map((fu) => this.mapFollowUpRow(fu, stageNameForFollowUp(fu)));
+
+    const pendingNextContacts: ConjuntoReportNextContact[] = [];
+    for (const fu of followUps) {
+      if (!fu.nextActionAt) continue;
+      const nextAt = new Date(fu.nextActionAt);
+      if (isNextActionFulfilled(nextAt, followUps, fulfilled)) continue;
+      pendingNextContacts.push({
+        followUpId: fu.id,
+        title: fu.title,
+        at: nextAt.toISOString(),
+        overdue: nextAt.getTime() < now.getTime(),
+      });
+    }
+    pendingNextContacts.sort(
+      (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
+    );
+
+    const reportProcess =
+      processes.find((p) => p.status === ClientProcessStatus.ACTIVE) ??
+      processes.find((p) => p.status === ClientProcessStatus.COMPLETED) ??
+      null;
+
+    let process: ConjuntoReportProcess | null = null;
+    if (reportProcess) {
+      const currentId = reportProcess.currentStageProgressId;
+      const stages: ConjuntoReportStage[] = (reportProcess.stageProgresses ?? []).map(
+        (sp) => {
+          const due = sp.dueDate ? new Date(sp.dueDate) : null;
+          const overdue =
+            !!due &&
+            due.getTime() < now.getTime() &&
+            sp.status !== StageProgressStatus.COMPLETED &&
+            sp.status !== StageProgressStatus.SKIPPED;
+          return {
+            id: sp.id,
+            orderIndex: sp.stageTemplate.orderIndex,
+            name: sp.stageTemplate.name,
+            stageType: sp.stageTemplate.stageType,
+            status: sp.status,
+            startedAt: sp.startedAt ? new Date(sp.startedAt).toISOString() : null,
+            dueDate: sp.dueDate ? new Date(sp.dueDate).toISOString() : null,
+            completedAt: sp.completedAt
+              ? new Date(sp.completedAt).toISOString()
+              : null,
+            overdue,
+            durationLabel: this.stageDurationLabel(sp.stageTemplate),
+            isCurrent:
+              sp.id === currentId ||
+              (sp.status === StageProgressStatus.IN_PROGRESS && !currentId),
+          };
+        },
+      );
+      const currentStage = stages.find((s) => s.isCurrent) ?? null;
+      process = {
+        id: reportProcess.id,
+        templateName: reportProcess.processTemplate?.name ?? 'Proceso',
+        status: reportProcess.status,
+        startedAt: reportProcess.startedAt
+          ? new Date(reportProcess.startedAt).toISOString()
+          : null,
+        completedAt: reportProcess.completedAt
+          ? new Date(reportProcess.completedAt).toISOString()
+          : null,
+        currentStageName: currentStage?.name ?? null,
+        stages,
+      };
+    }
+
+    const processIds = processes.map((p) => p.id);
+    const plannedMeetings: ConjuntoReportMeeting[] = [];
+
+    if (processIds.length) {
+      const stageMeetings = await this.meetingRepo
+        .createQueryBuilder('m')
+        .innerJoinAndSelect('m.stageProgress', 'sp')
+        .innerJoinAndSelect('sp.stageTemplate', 'st')
+        .innerJoin('sp.clientProcess', 'cp')
+        .where('cp.id IN (:...ids)', { ids: processIds })
+        .andWhere('m.status = :scheduled', { scheduled: MeetingStatus.SCHEDULED })
+        .orderBy('m.scheduledAt', 'ASC')
+        .getMany();
+
+      for (const m of stageMeetings) {
+        plannedMeetings.push({
+          id: m.id,
+          title: m.title,
+          scheduledAt: new Date(m.scheduledAt).toISOString(),
+          status: m.status,
+          stageName: m.stageProgress?.stageTemplate?.name ?? null,
+          source: 'stage',
+        });
+      }
+    }
+
+    const futureFollowUpMeetings = followUps.filter(
+      (fu) =>
+        fu.followUpType === FollowUpType.MEETING &&
+        new Date(fu.occurredAt).getTime() >= now.getTime(),
+    );
+    for (const fu of futureFollowUpMeetings) {
+      plannedMeetings.push({
+        id: fu.id,
+        title: fu.title,
+        scheduledAt: new Date(fu.occurredAt).toISOString(),
+        status: 'scheduled',
+        stageName: stageNameForFollowUp(fu),
+        source: 'followup',
+      });
+    }
+    plannedMeetings.sort(
+      (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
+    );
+
+    const calendarRows = await this.eventRepo.find({
+      where: { clientId },
+      order: { dueAt: 'ASC' },
+    });
+
+    const deliveries: ConjuntoReportDelivery[] = calendarRows
+      .filter((e) => e.status !== CalendarEventStatus.CANCELLED)
+      .map((e) => {
+        const due = new Date(e.dueAt);
+        const overdue =
+          e.status === CalendarEventStatus.ACTIVE && due.getTime() < now.getTime();
+        return {
+          id: e.id,
+          title: e.title,
+          dueAt: due.toISOString(),
+          status: e.status,
+          eventType: e.eventType as 'client_delivery' | 'internal_delivery',
+          description: e.description,
+          overdue,
+        };
+      });
+
+    return {
+      client: {
+        id: client.id,
+        name: client.name,
+        company: client.company,
+        contactName: client.contactName,
+        phone: client.phone,
+        email: client.email,
+      },
+      followUpSummary,
+      lastFollowUp,
+      recentFollowUps,
+      pendingNextContacts,
+      process,
+      plannedMeetings,
+      deliveries,
+    };
   }
 }

@@ -31,6 +31,11 @@ export class ClientsController {
     return this.service.getUpdateHistory(id);
   }
 
+  @Get(':id/conjunto-report')
+  conjuntoReport(@Param('id') id: string) {
+    return this.service.getConjuntoReport(id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
