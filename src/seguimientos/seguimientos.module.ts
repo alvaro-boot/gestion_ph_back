@@ -10,5 +10,6 @@ import { SeguimientosController } from './seguimientos.controller';
   imports: [TypeOrmModule.forFeature([FollowUp, Client, ClientProcess])],
   controllers: [SeguimientosController],
   providers: [SeguimientosService],
+  exports: [SeguimientosService],
 })
 export class SeguimientosModule {}

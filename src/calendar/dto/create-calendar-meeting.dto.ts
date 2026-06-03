@@ -1,8 +1,19 @@
-import { IsDateString, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import {
+  IsDateString,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MinLength,
+} from 'class-validator';
 
 export class CreateCalendarMeetingDto {
   @IsUUID()
-  stageProgressId: string;
+  processId: string;
+
+  /** Si el proceso está activo, puede indicar la etapa; si no, se usa la etapa en curso. */
+  @IsOptional()
+  @IsUUID()
+  stageProgressId?: string;
 
   @IsString()
   @MinLength(1)

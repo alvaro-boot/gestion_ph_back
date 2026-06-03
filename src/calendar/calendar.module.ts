@@ -9,6 +9,8 @@ import { CalendarService } from './calendar.service';
 import { CalendarController } from './calendar.controller';
 import { MeetingsModule } from '../meetings/meetings.module';
 import { ClientsModule } from '../clients/clients.module';
+import { SeguimientosModule } from '../seguimientos/seguimientos.module';
+import { FollowUp } from '../entities/follow-up.entity';
 
 @Module({
   imports: [
@@ -18,9 +20,11 @@ import { ClientsModule } from '../clients/clients.module';
       Client,
       ClientProcess,
       StageProgress,
+      FollowUp,
     ]),
     MeetingsModule,
     ClientsModule,
+    SeguimientosModule,
   ],
   controllers: [CalendarController],
   providers: [CalendarService],

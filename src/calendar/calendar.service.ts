@@ -14,9 +14,12 @@ import {
   CalendarEventStatus,
   CalendarEventType,
   ClientProcessStatus,
+  FollowUpType,
   MeetingStatus,
   StageProgressStatus,
 } from '../common/enums';
+import { FollowUp } from '../entities/follow-up.entity';
+import { SeguimientosService } from '../seguimientos/seguimientos.service';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 import { CreateCalendarMeetingDto } from './dto/create-calendar-meeting.dto';
@@ -41,6 +44,8 @@ export interface CalendarMonthItem {
   stageProgressId?: string | null;
   description?: string | null;
   processKind?: 'onboarding' | 'seguimiento';
+  /** Reunión ligada a etapa de onboarding vs. bitácora post-onboarding */
+  meetingSource?: 'stage' | 'followup';
   notes?: string | null;
   completionNotes?: string | null;
 }
@@ -68,8 +73,11 @@ export class CalendarService {
     private readonly processRepo: Repository<ClientProcess>,
     @InjectRepository(StageProgress)
     private readonly progressRepo: Repository<StageProgress>,
+    @InjectRepository(FollowUp)
+    private readonly followUpRepo: Repository<FollowUp>,
     private readonly meetingsService: MeetingsService,
     private readonly clientsService: ClientsService,
+    private readonly seguimientosService: SeguimientosService,
   ) {}
 
   async getBootstrap(year: number, month: number) {
@@ -88,7 +96,7 @@ export class CalendarService {
     const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
     const end = new Date(year, month, 0, 23, 59, 59, 999);
 
-    const [meetings, deliveries] = await Promise.all([
+    const [meetings, followUpMeetings, deliveries] = await Promise.all([
       this.meetingRepo
         .createQueryBuilder('m')
         .innerJoinAndSelect('m.stageProgress', 'sp')
@@ -101,6 +109,17 @@ export class CalendarService {
           cancelled: MeetingStatus.CANCELLED,
         })
         .orderBy('m.scheduledAt', 'ASC')
+        .getMany(),
+      this.followUpRepo
+        .createQueryBuilder('fu')
+        .innerJoinAndSelect('fu.client', 'client')
+        .leftJoinAndSelect('fu.clientProcess', 'cp')
+        .where('fu.followUpType = :meetingType', {
+          meetingType: FollowUpType.MEETING,
+        })
+        .andWhere('fu.occurredAt >= :start', { start })
+        .andWhere('fu.occurredAt <= :end', { end })
+        .orderBy('fu.occurredAt', 'ASC')
         .getMany(),
       this.eventRepo
         .createQueryBuilder('e')
@@ -132,9 +151,23 @@ export class CalendarService {
           processId: m.stageProgress?.clientProcess?.id ?? null,
           stageProgressId: m.stageProgressId,
           processKind,
+          meetingSource: 'stage' as const,
           notes: m.notes,
         };
       }),
+      ...followUpMeetings.map((fu) => ({
+        id: fu.id,
+        kind: 'meeting' as const,
+        title: fu.title,
+        at: fu.occurredAt.toISOString(),
+        status: 'scheduled',
+        clientId: fu.clientId,
+        clientName: fu.client?.name ?? '—',
+        processId: fu.clientProcessId,
+        processKind: 'seguimiento' as const,
+        meetingSource: 'followup' as const,
+        description: fu.description,
+      })),
       ...deliveries.map((e) => ({
         id: e.id,
         kind:
@@ -224,13 +257,71 @@ export class CalendarService {
   }
 
   async createMeeting(dto: CreateCalendarMeetingDto) {
-    return this.meetingsService.create({
-      stageProgressId: dto.stageProgressId,
-      title: dto.title,
-      scheduledAt: dto.scheduledAt,
-      location: dto.location,
-      notes: dto.notes,
+    const process = await this.processRepo.findOne({
+      where: { id: dto.processId },
+      relations: {
+        client: true,
+        processTemplate: true,
+        stageProgresses: { stageTemplate: true },
+      },
     });
+    if (!process) {
+      throw new NotFoundException('Proceso del cliente no encontrado');
+    }
+    if (isSeguimientoTemplate(process.processTemplate)) {
+      throw new BadRequestException(
+        'Selecciona el proceso de onboarding del cliente, no la plantilla «Seguimiento».',
+      );
+    }
+
+    const scheduledAt = new Date(dto.scheduledAt);
+
+    if (process.status === ClientProcessStatus.ACTIVE) {
+      let stageId = dto.stageProgressId;
+      if (stageId) {
+        const belongs = process.stageProgresses?.some((sp) => sp.id === stageId);
+        if (!belongs) {
+          throw new BadRequestException('La etapa no pertenece a este proceso.');
+        }
+      } else {
+        const current = process.stageProgresses?.find(
+          (sp) => sp.status === StageProgressStatus.IN_PROGRESS,
+        );
+        if (!current) {
+          throw new BadRequestException(
+            'No hay etapa en curso en este proceso de onboarding.',
+          );
+        }
+        stageId = current.id;
+      }
+
+      const meeting = await this.meetingsService.create({
+        stageProgressId: stageId!,
+        title: dto.title,
+        scheduledAt: dto.scheduledAt,
+        location: dto.location,
+        notes: dto.notes,
+      });
+
+      return { meetingSource: 'stage' as const, meeting };
+    }
+
+    if (process.status === ClientProcessStatus.COMPLETED) {
+      const followUp = await this.seguimientosService.create({
+        clientId: process.clientId,
+        clientProcessId: process.id,
+        title: dto.title,
+        description: dto.notes ?? undefined,
+        followUpType: FollowUpType.MEETING,
+        occurredAt: dto.scheduledAt,
+      });
+
+      return { meetingSource: 'followup' as const, followUp };
+    }
+
+    throw new BadRequestException(
+      'Solo puedes agendar reuniones en procesos de onboarding activos o completados.',
+    );
   }
 
   async cancelMeeting(id: string) {
@@ -288,14 +379,15 @@ export class CalendarService {
 
     return processes.map((p) => {
       const sp = stageByProcess.get(p.id);
+      const isActive = p.status === ClientProcessStatus.ACTIVE;
       return {
         processId: p.id,
         clientId: p.clientId,
         clientName: p.client?.name ?? '—',
         templateName: p.processTemplate?.name ?? 'Proceso',
-        processKind: 'onboarding' as const,
-        currentStageProgressId: sp?.id ?? null,
-        currentStageName: sp?.stageTemplate?.name ?? null,
+        processKind: isActive ? ('onboarding' as const) : ('seguimiento' as const),
+        currentStageProgressId: isActive ? (sp?.id ?? null) : null,
+        currentStageName: isActive ? (sp?.stageTemplate?.name ?? null) : null,
       };
     });
   }

@@ -9,6 +9,7 @@ import { FollowUp } from '../entities/follow-up.entity';
 import { Client } from '../entities/client.entity';
 import { ClientProcess } from '../entities/client-process.entity';
 import { CreateSeguimientoDto } from './dto/create-seguimiento.dto';
+import { UpdateSeguimientoDto } from './dto/update-seguimiento.dto';
 import { ClientProcessStatus, FollowUpType } from '../common/enums';
 import { isSeguimientoTemplate } from '../common/seguimiento-template';
 
@@ -92,6 +93,21 @@ export class SeguimientosService {
     });
 
     return this.followUpRepo.save(entity);
+  }
+
+  async update(id: string, dto: UpdateSeguimientoDto) {
+    const item = await this.followUpRepo.findOne({ where: { id } });
+    if (!item) throw new NotFoundException('Seguimiento no encontrado');
+
+    if (dto.title !== undefined) item.title = dto.title;
+    if (dto.description !== undefined) item.description = dto.description ?? null;
+    if (dto.occurredAt !== undefined) item.occurredAt = new Date(dto.occurredAt);
+    if (dto.nextActionAt !== undefined) {
+      item.nextActionAt = dto.nextActionAt ? new Date(dto.nextActionAt) : null;
+    }
+    if (dto.followUpType !== undefined) item.followUpType = dto.followUpType;
+
+    return this.followUpRepo.save(item);
   }
 
   async remove(id: string) {
