@@ -246,7 +246,26 @@ export class CalendarService {
       event.status = dto.status;
     }
 
-    return this.eventRepo.save(event);
+    const saved = await this.eventRepo.save(event);
+
+    if (saved.status === CalendarEventStatus.COMPLETED) {
+      await this.clearFulfilledNextActions(saved.clientId, saved.dueAt);
+    }
+
+    return saved;
+  }
+
+  private async clearFulfilledNextActions(clientId: string, fulfilledAt: Date) {
+    const followUps = await this.followUpRepo.find({ where: { clientId } });
+    for (const fu of followUps) {
+      if (
+        fu.nextActionAt &&
+        new Date(fu.nextActionAt).getTime() <= fulfilledAt.getTime()
+      ) {
+        fu.nextActionAt = null;
+        await this.followUpRepo.save(fu);
+      }
+    }
   }
 
   async removeDelivery(id: string) {

@@ -17,8 +17,14 @@ import {
   FollowUpAlertRow,
   FollowUpSummary,
 } from '../common/follow-up-summary';
-import { ClientProcessStatus } from '../common/enums';
+import {
+  CalendarEventStatus,
+  ClientProcessStatus,
+  MeetingStatus,
+} from '../common/enums';
 import { isSeguimientoTemplate } from '../common/seguimiento-template';
+import { Meeting } from '../entities/meeting.entity';
+import { CalendarEvent } from '../entities/calendar-event.entity';
 
 export interface AuthUserPayload {
   id: string;
@@ -42,9 +48,65 @@ export class ClientsService {
     private readonly processRepo: Repository<ClientProcess>,
     @InjectRepository(FollowUp)
     private readonly followUpRepo: Repository<FollowUp>,
+    @InjectRepository(Meeting)
+    private readonly meetingRepo: Repository<Meeting>,
+    @InjectRepository(CalendarEvent)
+    private readonly eventRepo: Repository<CalendarEvent>,
     @InjectRepository(ClientUpdateLog)
     private readonly updateLogRepo: Repository<ClientUpdateLog>,
   ) {}
+
+  /** Reuniones/entregas terminadas que cumplen un «próximo contacto» pendiente. */
+  private async loadFulfilledDatesByClient(
+    clientIds: string[],
+  ): Promise<Map<string, Date[]>> {
+    const map = new Map<string, Date[]>();
+    if (!clientIds.length) return map;
+
+    const push = (clientId: string, at: Date) => {
+      const list = map.get(clientId) ?? [];
+      list.push(at);
+      map.set(clientId, list);
+    };
+
+    const meetings = await this.meetingRepo
+      .createQueryBuilder('m')
+      .innerJoinAndSelect('m.stageProgress', 'sp')
+      .innerJoinAndSelect('sp.clientProcess', 'cp')
+      .where('cp.clientId IN (:...ids)', { ids: clientIds })
+      .andWhere('m.status = :completed', { completed: MeetingStatus.COMPLETED })
+      .getMany();
+
+    for (const m of meetings) {
+      push(m.stageProgress.clientProcess.clientId, m.scheduledAt);
+    }
+
+    const deliveries = await this.eventRepo.find({
+      where: {
+        clientId: In(clientIds),
+        status: CalendarEventStatus.COMPLETED,
+      },
+      select: { clientId: true, dueAt: true },
+    });
+    for (const e of deliveries) {
+      push(e.clientId, new Date(e.dueAt));
+    }
+
+    return map;
+  }
+
+  private attachFollowUpSummaryForClient<T extends { id: string; followUps?: FollowUp[] }>(
+    client: T,
+    fulfilledByClient: Map<string, Date[]>,
+  ): T & { followUpSummary: FollowUpSummary } {
+    return {
+      ...client,
+      followUpSummary: buildFollowUpSummary(
+        client.followUps,
+        fulfilledByClient.get(client.id) ?? [],
+      ),
+    };
+  }
 
   private groupFollowUpsByClient(followUps: FollowUp[]) {
     const map = new Map<string, FollowUp[]>();
@@ -54,15 +116,6 @@ export class ClientsService {
       map.set(fu.clientId, list);
     }
     return map;
-  }
-
-  private attachFollowUpSummary<T extends { followUps?: import('../entities/follow-up.entity').FollowUp[] }>(
-    client: T,
-  ): T & { followUpSummary: FollowUpSummary } {
-    return {
-      ...client,
-      followUpSummary: buildFollowUpSummary(client.followUps),
-    };
   }
 
   private clientHasTrackableProcess(client: {
@@ -104,12 +157,18 @@ export class ClientsService {
       }),
     ]);
     const followUpsByClient = this.groupFollowUpsByClient(followUps);
+    const fulfilledByClient = await this.loadFulfilledDatesByClient(
+      clients.map((c) => c.id),
+    );
 
     return clients.map((c) =>
-      this.attachFollowUpSummary({
-        ...this.withoutSeguimientoProcesses(c),
-        followUps: followUpsByClient.get(c.id) ?? [],
-      }),
+      this.attachFollowUpSummaryForClient(
+        {
+          ...this.withoutSeguimientoProcesses(c),
+          followUps: followUpsByClient.get(c.id) ?? [],
+        },
+        fulfilledByClient,
+      ),
     );
   }
 
@@ -173,11 +232,15 @@ export class ClientsService {
       }),
     ]);
     const followUpsByClient = this.groupFollowUpsByClient(followUps);
+    const fulfilledByClient = await this.loadFulfilledDatesByClient(clientIds);
 
     const rows: FollowUpAlertRow[] = [];
 
     for (const client of clients) {
-      const summary = buildFollowUpSummary(followUpsByClient.get(client.id) ?? []);
+      const summary = buildFollowUpSummary(
+        followUpsByClient.get(client.id) ?? [],
+        fulfilledByClient.get(client.id) ?? [],
+      );
       const stale =
         summary.daysSinceLastFollowUp === null ||
         summary.daysSinceLastFollowUp >= staleDays;
@@ -236,7 +299,11 @@ export class ClientsService {
     client.updateLogs?.sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
-    return this.attachFollowUpSummary(this.withoutSeguimientoProcesses(client));
+    const fulfilledByClient = await this.loadFulfilledDatesByClient([client.id]);
+    return this.attachFollowUpSummaryForClient(
+      this.withoutSeguimientoProcesses(client),
+      fulfilledByClient,
+    );
   }
 
   create(dto: CreateClientDto) {

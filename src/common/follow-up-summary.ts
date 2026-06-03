@@ -8,8 +8,25 @@ export interface FollowUpSummary {
   totalFollowUps: number;
 }
 
+/** Fechas en que ya hubo contacto (seguimiento o reunión/entrega cerrada). */
+function isNextActionFulfilled(
+  nextActionAt: Date,
+  followUps: FollowUp[],
+  fulfilledAt: Date[],
+): boolean {
+  const nextMs = nextActionAt.getTime();
+
+  const contactAfter = followUps.some(
+    (f) => new Date(f.occurredAt).getTime() >= nextMs,
+  );
+  if (contactAfter) return true;
+
+  return fulfilledAt.some((d) => d.getTime() >= nextMs);
+}
+
 export function buildFollowUpSummary(
   followUps: FollowUp[] | undefined,
+  fulfilledAt: Date[] = [],
 ): FollowUpSummary {
   const list = followUps ?? [];
   const sorted = [...list].sort(
@@ -24,18 +41,21 @@ export function buildFollowUpSummary(
     daysSinceLastFollowUp = Math.max(0, Math.floor(diff / 86400000));
   }
 
-  const withNext = list
+  const pendingNextMs = list
     .filter((f) => f.nextActionAt)
-    .map((f) => new Date(f.nextActionAt!));
+    .map((f) => new Date(f.nextActionAt!))
+    .filter((nextDate) => !isNextActionFulfilled(nextDate, list, fulfilledAt))
+    .map((d) => d.getTime());
 
-  const upcoming = withNext
-    .filter((d) => d.getTime() >= now.getTime())
-    .sort((a, b) => a.getTime() - b.getTime());
-  const overdueNext = withNext
-    .filter((d) => d.getTime() < now.getTime())
-    .sort((a, b) => b.getTime() - a.getTime());
+  const upcoming = pendingNextMs
+    .filter((ms) => ms >= now.getTime())
+    .sort((a, b) => a - b);
+  const overdueNext = pendingNextMs
+    .filter((ms) => ms < now.getTime())
+    .sort((a, b) => b - a);
 
-  const nextDate = upcoming[0] ?? overdueNext[0] ?? null;
+  const nextMs = upcoming[0] ?? overdueNext[0] ?? null;
+  const nextDate = nextMs !== null ? new Date(nextMs) : null;
 
   return {
     lastFollowUpAt: last ? new Date(last.occurredAt).toISOString() : null,
