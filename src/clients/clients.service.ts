@@ -57,7 +57,7 @@ export class ClientsService {
   ) {}
 
   /** Reuniones/entregas terminadas que cumplen un «próximo contacto» pendiente. */
-  private async loadFulfilledDatesByClient(
+  async getFulfilledDatesByClient(
     clientIds: string[],
   ): Promise<Map<string, Date[]>> {
     const map = new Map<string, Date[]>();
@@ -157,7 +157,7 @@ export class ClientsService {
       }),
     ]);
     const followUpsByClient = this.groupFollowUpsByClient(followUps);
-    const fulfilledByClient = await this.loadFulfilledDatesByClient(
+    const fulfilledByClient = await this.getFulfilledDatesByClient(
       clients.map((c) => c.id),
     );
 
@@ -232,7 +232,7 @@ export class ClientsService {
       }),
     ]);
     const followUpsByClient = this.groupFollowUpsByClient(followUps);
-    const fulfilledByClient = await this.loadFulfilledDatesByClient(clientIds);
+    const fulfilledByClient = await this.getFulfilledDatesByClient(clientIds);
 
     const rows: FollowUpAlertRow[] = [];
 
@@ -299,7 +299,7 @@ export class ClientsService {
     client.updateLogs?.sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
-    const fulfilledByClient = await this.loadFulfilledDatesByClient([client.id]);
+    const fulfilledByClient = await this.getFulfilledDatesByClient([client.id]);
     return this.attachFollowUpSummaryForClient(
       this.withoutSeguimientoProcesses(client),
       fulfilledByClient,

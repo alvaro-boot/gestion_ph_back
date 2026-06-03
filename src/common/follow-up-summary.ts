@@ -9,7 +9,7 @@ export interface FollowUpSummary {
 }
 
 /** Fechas en que ya hubo contacto (seguimiento o reunión/entrega cerrada). */
-function isNextActionFulfilled(
+export function isNextActionFulfilled(
   nextActionAt: Date,
   followUps: FollowUp[],
   fulfilledAt: Date[],

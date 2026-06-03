@@ -29,8 +29,13 @@ import { isSeguimientoTemplate } from '../common/seguimiento-template';
 import { ProcessTemplate } from '../entities/process-template.entity';
 import { ClientsService } from '../clients/clients.service';
 import { In } from 'typeorm';
+import { isNextActionFulfilled } from '../common/follow-up-summary';
 
-export type CalendarItemKind = 'meeting' | 'client_delivery' | 'internal_delivery';
+export type CalendarItemKind =
+  | 'meeting'
+  | 'client_delivery'
+  | 'internal_delivery'
+  | 'next_contact';
 
 export interface CalendarMonthItem {
   id: string;
@@ -48,6 +53,8 @@ export interface CalendarMonthItem {
   meetingSource?: 'stage' | 'followup';
   notes?: string | null;
   completionNotes?: string | null;
+  /** Fecha original del compromiso (próximo contacto), si se muestra al inicio del mes por vencido */
+  scheduledAt?: string | null;
 }
 
 export interface CalendarPickerOption {
@@ -96,7 +103,8 @@ export class CalendarService {
     const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
     const end = new Date(year, month, 0, 23, 59, 59, 999);
 
-    const [meetings, followUpMeetings, deliveries] = await Promise.all([
+    const [meetings, followUpMeetings, deliveries, nextContacts] =
+      await Promise.all([
       this.meetingRepo
         .createQueryBuilder('m')
         .innerJoinAndSelect('m.stageProgress', 'sp')
@@ -131,6 +139,7 @@ export class CalendarService {
         })
         .orderBy('e.dueAt', 'ASC')
         .getMany(),
+      this.loadNextContactItems(start, end),
     ]);
 
     const items: CalendarMonthItem[] = [
@@ -183,9 +192,72 @@ export class CalendarService {
         description: e.description,
         completionNotes: e.completionNotes,
       })),
+      ...nextContacts,
     ];
 
     items.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    return items;
+  }
+
+  /** Próximos contactos pendientes (campo nextActionAt de seguimientos). */
+  private async loadNextContactItems(
+    start: Date,
+    end: Date,
+  ): Promise<CalendarMonthItem[]> {
+    const candidates = await this.followUpRepo
+      .createQueryBuilder('fu')
+      .innerJoinAndSelect('fu.client', 'client')
+      .where('fu.nextActionAt IS NOT NULL')
+      .andWhere('fu.nextActionAt <= :end', { end })
+      .getMany();
+
+    if (!candidates.length) return [];
+
+    const clientIds = [...new Set(candidates.map((c) => c.clientId))];
+    const [allFollowUps, fulfilledByClient] = await Promise.all([
+      this.followUpRepo.find({ where: { clientId: In(clientIds) } }),
+      this.clientsService.getFulfilledDatesByClient(clientIds),
+    ]);
+
+    const followUpsByClient = new Map<string, FollowUp[]>();
+    for (const fu of allFollowUps) {
+      const list = followUpsByClient.get(fu.clientId) ?? [];
+      list.push(fu);
+      followUpsByClient.set(fu.clientId, list);
+    }
+
+    const now = new Date();
+    const items: CalendarMonthItem[] = [];
+
+    for (const fu of candidates) {
+      const nextAt = new Date(fu.nextActionAt!);
+      const clientFollowUps = followUpsByClient.get(fu.clientId) ?? [];
+      const fulfilled = fulfilledByClient.get(fu.clientId) ?? [];
+
+      if (isNextActionFulfilled(nextAt, clientFollowUps, fulfilled)) {
+        continue;
+      }
+
+      const overdue = nextAt.getTime() < now.getTime();
+      const displayAt =
+        nextAt.getTime() < start.getTime()
+          ? new Date(start.getFullYear(), start.getMonth(), start.getDate(), 9, 0, 0, 0)
+          : nextAt;
+
+      items.push({
+        id: fu.id,
+        kind: 'next_contact',
+        title: fu.title,
+        at: displayAt.toISOString(),
+        scheduledAt: nextAt.toISOString(),
+        status: overdue ? 'overdue' : 'pending',
+        clientId: fu.clientId,
+        clientName: fu.client?.name ?? '—',
+        processId: fu.clientProcessId,
+        description: fu.description,
+      });
+    }
+
     return items;
   }
 
