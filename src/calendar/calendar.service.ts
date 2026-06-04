@@ -236,9 +236,7 @@ export class CalendarService {
       const clientFollowUps = followUpsByClient.get(fu.clientId) ?? [];
       const fulfilled = fulfilledByClient.get(fu.clientId) ?? [];
 
-      const done =
-        isNextActionFulfilled(nextAt, clientFollowUps, fulfilled) ||
-        (fu.description?.includes('[Contacto realizado]') ?? false);
+      const done = isNextActionFulfilled(nextAt, clientFollowUps, fulfilled);
 
       const overdue = !done && nextAt.getTime() < now.getTime();
       const displayAt =
