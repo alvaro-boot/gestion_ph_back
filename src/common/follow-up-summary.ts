@@ -16,6 +16,14 @@ export function isNextActionFulfilled(
 ): boolean {
   const nextMs = nextActionAt.getTime();
 
+  const markedOnCalendar = followUps.some(
+    (f) =>
+      f.nextActionAt &&
+      new Date(f.nextActionAt).getTime() === nextMs &&
+      (f.description?.includes('[Contacto realizado]') ?? false),
+  );
+  if (markedOnCalendar) return true;
+
   const contactAfter = followUps.some(
     (f) => new Date(f.occurredAt).getTime() >= nextMs,
   );

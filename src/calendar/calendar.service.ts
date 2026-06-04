@@ -169,7 +169,9 @@ export class CalendarService {
         kind: 'meeting' as const,
         title: fu.title,
         at: fu.occurredAt.toISOString(),
-        status: 'scheduled',
+        status: fu.description?.includes('[Realizada]')
+          ? 'completed'
+          : 'scheduled',
         clientId: fu.clientId,
         clientName: fu.client?.name ?? '—',
         processId: fu.clientProcessId,
@@ -199,7 +201,7 @@ export class CalendarService {
     return items;
   }
 
-  /** Próximos contactos pendientes (campo nextActionAt de seguimientos). */
+  /** Próximos contactos (pendientes y realizados) en el calendario. */
   private async loadNextContactItems(
     start: Date,
     end: Date,
@@ -234,15 +236,17 @@ export class CalendarService {
       const clientFollowUps = followUpsByClient.get(fu.clientId) ?? [];
       const fulfilled = fulfilledByClient.get(fu.clientId) ?? [];
 
-      if (isNextActionFulfilled(nextAt, clientFollowUps, fulfilled)) {
-        continue;
-      }
+      const done =
+        isNextActionFulfilled(nextAt, clientFollowUps, fulfilled) ||
+        (fu.description?.includes('[Contacto realizado]') ?? false);
 
-      const overdue = nextAt.getTime() < now.getTime();
+      const overdue = !done && nextAt.getTime() < now.getTime();
       const displayAt =
         nextAt.getTime() < start.getTime()
           ? new Date(start.getFullYear(), start.getMonth(), start.getDate(), 9, 0, 0, 0)
           : nextAt;
+
+      if (nextAt.getTime() > end.getTime()) continue;
 
       items.push({
         id: fu.id,
@@ -250,7 +254,7 @@ export class CalendarService {
         title: fu.title,
         at: displayAt.toISOString(),
         scheduledAt: nextAt.toISOString(),
-        status: overdue ? 'overdue' : 'pending',
+        status: done ? 'completed' : overdue ? 'overdue' : 'pending',
         clientId: fu.clientId,
         clientName: fu.client?.name ?? '—',
         processId: fu.clientProcessId,
@@ -318,26 +322,7 @@ export class CalendarService {
       event.status = dto.status;
     }
 
-    const saved = await this.eventRepo.save(event);
-
-    if (saved.status === CalendarEventStatus.COMPLETED) {
-      await this.clearFulfilledNextActions(saved.clientId, saved.dueAt);
-    }
-
-    return saved;
-  }
-
-  private async clearFulfilledNextActions(clientId: string, fulfilledAt: Date) {
-    const followUps = await this.followUpRepo.find({ where: { clientId } });
-    for (const fu of followUps) {
-      if (
-        fu.nextActionAt &&
-        new Date(fu.nextActionAt).getTime() <= fulfilledAt.getTime()
-      ) {
-        fu.nextActionAt = null;
-        await this.followUpRepo.save(fu);
-      }
-    }
+    return this.eventRepo.save(event);
   }
 
   async removeDelivery(id: string) {

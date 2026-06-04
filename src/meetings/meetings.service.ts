@@ -7,7 +7,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Meeting } from '../entities/meeting.entity';
 import { StageProgress } from '../entities/stage-progress.entity';
-import { FollowUp } from '../entities/follow-up.entity';
 import { CreateMeetingDto } from './dto/create-meeting.dto';
 import { UpdateMeetingDto } from './dto/update-meeting.dto';
 import { MeetingStatus } from '../common/enums';
@@ -19,25 +18,7 @@ export class MeetingsService {
     private readonly meetingRepo: Repository<Meeting>,
     @InjectRepository(StageProgress)
     private readonly progressRepo: Repository<StageProgress>,
-    @InjectRepository(FollowUp)
-    private readonly followUpRepo: Repository<FollowUp>,
   ) {}
-
-  private async clearFulfilledNextActions(
-    clientId: string,
-    fulfilledAt: Date,
-  ) {
-    const followUps = await this.followUpRepo.find({ where: { clientId } });
-    for (const fu of followUps) {
-      if (
-        fu.nextActionAt &&
-        new Date(fu.nextActionAt).getTime() <= fulfilledAt.getTime()
-      ) {
-        fu.nextActionAt = null;
-        await this.followUpRepo.save(fu);
-      }
-    }
-  }
 
   async findByMonth(year: number, month: number) {
     if (month < 1 || month > 12) {
@@ -132,21 +113,6 @@ export class MeetingsService {
       meeting.status = dto.status;
     }
 
-    const saved = await this.meetingRepo.save(meeting);
-
-    if (saved.status === MeetingStatus.COMPLETED) {
-      const progress = await this.progressRepo.findOne({
-        where: { id: saved.stageProgressId },
-        relations: { clientProcess: true },
-      });
-      if (progress?.clientProcess?.clientId) {
-        await this.clearFulfilledNextActions(
-          progress.clientProcess.clientId,
-          saved.scheduledAt,
-        );
-      }
-    }
-
-    return saved;
+    return this.meetingRepo.save(meeting);
   }
 }

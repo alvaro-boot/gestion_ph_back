@@ -290,9 +290,6 @@ export class ClientsService {
           processTemplate: true,
           stageProgresses: { stageTemplate: true },
         },
-        followUps: {
-          clientProcess: { processTemplate: true },
-        },
         updateLogs: true,
       },
     });
@@ -304,9 +301,12 @@ export class ClientsService {
         (a, b) => a.stageTemplate.orderIndex - b.stageTemplate.orderIndex,
       );
     }
-    client.followUps?.sort(
-      (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
-    );
+    const followUps = await this.followUpRepo.find({
+      where: { clientId: id },
+      relations: { clientProcess: { processTemplate: true } },
+      order: { occurredAt: 'DESC' },
+    });
+    client.followUps = followUps;
     client.updateLogs?.sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
