@@ -55,6 +55,8 @@ export interface CalendarMonthItem {
   completionNotes?: string | null;
   /** Fecha original del compromiso (próximo contacto), si se muestra al inicio del mes por vencido */
   scheduledAt?: string | null;
+  /** Próximo contacto a nivel cliente vs. compromiso en un seguimiento (nextActionAt). */
+  nextContactSource?: 'client' | 'followup';
 }
 
 export interface CalendarPickerOption {
@@ -103,7 +105,7 @@ export class CalendarService {
     const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
     const end = new Date(year, month, 0, 23, 59, 59, 999);
 
-    const [meetings, followUpMeetings, deliveries, nextContacts] =
+    const [meetings, followUpMeetings, deliveries, nextContacts, followUpNextActions] =
       await Promise.all([
       this.meetingRepo
         .createQueryBuilder('m')
@@ -140,6 +142,7 @@ export class CalendarService {
         .orderBy('e.dueAt', 'ASC')
         .getMany(),
       this.loadNextContactItems(start, end),
+      this.loadFollowUpNextActionItems(start, end),
     ]);
 
     const items: CalendarMonthItem[] = [
@@ -195,6 +198,7 @@ export class CalendarService {
         completionNotes: e.completionNotes,
       })),
       ...nextContacts,
+      ...followUpNextActions,
     ];
 
     items.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
@@ -256,6 +260,91 @@ export class CalendarService {
         clientName: client.name,
         processId: null,
         description: null,
+        nextContactSource: 'client',
+      });
+    }
+
+    return items;
+  }
+
+  /** Compromisos planificados en seguimientos (nextActionAt) aún no migrados al cliente. */
+  private async loadFollowUpNextActionItems(
+    start: Date,
+    end: Date,
+  ): Promise<CalendarMonthItem[]> {
+    const followUps = await this.followUpRepo
+      .createQueryBuilder('fu')
+      .innerJoinAndSelect('fu.client', 'client')
+      .leftJoinAndSelect('fu.clientProcess', 'cp')
+      .where('fu.nextActionAt IS NOT NULL')
+      .andWhere('fu.nextActionAt <= :end', { end })
+      .getMany();
+
+    if (!followUps.length) return [];
+
+    const clientIds = [...new Set(followUps.map((fu) => fu.clientId))];
+    const clientsWithField = await this.clientRepo.find({
+      where: { id: In(clientIds) },
+      select: { id: true, nextContactAt: true },
+    });
+    const clientNextAt = new Map(
+      clientsWithField.map((c) => [c.id, c.nextContactAt]),
+    );
+
+    const allFollowUps = await this.followUpRepo.find({
+      where: { clientId: In(clientIds) },
+    });
+    const followUpsByClient = new Map<string, FollowUp[]>();
+    for (const fu of allFollowUps) {
+      const list = followUpsByClient.get(fu.clientId) ?? [];
+      list.push(fu);
+      followUpsByClient.set(fu.clientId, list);
+    }
+
+    const fulfilledByClient =
+      await this.clientsService.getFulfilledDatesByClient(clientIds);
+
+    const now = new Date();
+    const items: CalendarMonthItem[] = [];
+
+    for (const fu of followUps) {
+      const nextAt = new Date(fu.nextActionAt!);
+      const clientFollowUps = followUpsByClient.get(fu.clientId) ?? [];
+      const fulfilled = fulfilledByClient.get(fu.clientId) ?? [];
+
+      if (isNextActionFulfilled(nextAt, clientFollowUps, fulfilled)) continue;
+
+      const clientLevel = clientNextAt.get(fu.clientId);
+      if (clientLevel) {
+        const atClient = new Date(clientLevel);
+        if (
+          !isNextActionFulfilled(atClient, clientFollowUps, fulfilled) &&
+          atClient.getTime() === nextAt.getTime()
+        ) {
+          continue;
+        }
+      }
+
+      const overdue = nextAt.getTime() < now.getTime();
+      const displayAt =
+        nextAt.getTime() < start.getTime()
+          ? new Date(start.getFullYear(), start.getMonth(), start.getDate(), 9, 0, 0, 0)
+          : nextAt;
+
+      if (nextAt.getTime() > end.getTime()) continue;
+
+      items.push({
+        id: fu.id,
+        kind: 'next_contact',
+        title: fu.title,
+        at: displayAt.toISOString(),
+        scheduledAt: nextAt.toISOString(),
+        status: overdue ? 'overdue' : 'pending',
+        clientId: fu.clientId,
+        clientName: fu.client?.name ?? '—',
+        processId: fu.clientProcessId,
+        description: fu.description,
+        nextContactSource: 'followup',
       });
     }
 

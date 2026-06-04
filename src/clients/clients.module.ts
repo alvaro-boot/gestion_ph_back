@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, OnModuleInit } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Client } from '../entities/client.entity';
 import { ClientProcess } from '../entities/client-process.entity';
@@ -28,4 +28,14 @@ import { ClientsController } from './clients.controller';
   providers: [ClientsService],
   exports: [ClientsService],
 })
-export class ClientsModule {}
+export class ClientsModule implements OnModuleInit {
+  constructor(private readonly clientsService: ClientsService) {}
+
+  async onModuleInit() {
+    try {
+      await this.clientsService.syncLegacyNextContacts();
+    } catch {
+      // No bloquear el arranque si la BD aún no tiene las columnas nuevas.
+    }
+  }
+}

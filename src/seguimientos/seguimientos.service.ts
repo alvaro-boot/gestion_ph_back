@@ -102,7 +102,9 @@ export class SeguimientosService {
     if (dto.description !== undefined) item.description = dto.description ?? null;
     if (dto.occurredAt !== undefined) item.occurredAt = new Date(dto.occurredAt);
     if (dto.nextActionAt !== undefined) {
-      item.nextActionAt = dto.nextActionAt ? new Date(dto.nextActionAt) : null;
+      const raw = dto.nextActionAt;
+      item.nextActionAt =
+        raw != null && String(raw).trim() !== '' ? new Date(raw) : null;
     }
     if (dto.followUpType !== undefined) item.followUpType = dto.followUpType;
 

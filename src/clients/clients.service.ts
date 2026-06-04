@@ -67,6 +67,51 @@ export class ClientsService {
     private readonly updateLogRepo: Repository<ClientUpdateLog>,
   ) {}
 
+  /**
+   * Migra próximos contactos antiguos (nextActionAt en seguimientos) al campo del cliente
+   * para que sigan apareciendo en el calendario con el modelo actual.
+   */
+  async syncLegacyNextContacts(): Promise<void> {
+    const clients = await this.clientRepo
+      .createQueryBuilder('c')
+      .where('c.nextContactAt IS NULL')
+      .getMany();
+    if (!clients.length) return;
+
+    const ids = clients.map((c) => c.id);
+    const allFollowUps = await this.followUpRepo.find({
+      where: { clientId: In(ids) },
+    });
+    const fulfilledByClient = await this.getFulfilledDatesByClient(ids);
+    const byClient = new Map<string, FollowUp[]>();
+    for (const fu of allFollowUps) {
+      const list = byClient.get(fu.clientId) ?? [];
+      list.push(fu);
+      byClient.set(fu.clientId, list);
+    }
+
+    for (const client of clients) {
+      const list = byClient.get(client.id) ?? [];
+      const fulfilled = fulfilledByClient.get(client.id) ?? [];
+      const summary = buildFollowUpSummary(list, fulfilled, null);
+      if (!summary.nextActionAt) continue;
+
+      const nextMs = new Date(summary.nextActionAt).getTime();
+      const source = list.find(
+        (f) =>
+          f.nextActionAt != null &&
+          new Date(f.nextActionAt).getTime() === nextMs,
+      );
+      if (!source) continue;
+
+      client.nextContactAt = new Date(summary.nextActionAt);
+      client.nextContactTitle = source.title?.trim() || 'Próximo contacto';
+      source.nextActionAt = null;
+      await this.clientRepo.save(client);
+      await this.followUpRepo.save(source);
+    }
+  }
+
   /** Reuniones/entregas terminadas que cumplen un «próximo contacto» pendiente. */
   async getFulfilledDatesByClient(
     clientIds: string[],
@@ -399,9 +444,9 @@ export class ClientsService {
     }
 
     if (dto.nextContactAt !== undefined) {
-      client.nextContactAt = dto.nextContactAt
-        ? new Date(dto.nextContactAt)
-        : null;
+      const raw = dto.nextContactAt;
+      client.nextContactAt =
+        raw != null && String(raw).trim() !== '' ? new Date(raw) : null;
     }
     if (dto.nextContactTitle !== undefined) {
       client.nextContactTitle = dto.nextContactTitle?.trim() || null;

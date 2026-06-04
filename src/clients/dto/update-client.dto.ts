@@ -4,12 +4,11 @@ import { CreateClientDto } from './create-client.dto';
 
 export class UpdateClientDto extends PartialType(CreateClientDto) {
   @IsOptional()
-  @ValidateIf((_, v) => v !== null)
+  @ValidateIf((_, v) => v != null && v !== '')
   @IsDateString()
   nextContactAt?: string | null;
 
   @IsOptional()
-  @ValidateIf((_, v) => v !== null)
   @IsString()
   nextContactTitle?: string | null;
 }

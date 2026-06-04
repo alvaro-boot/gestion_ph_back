@@ -1,4 +1,11 @@
-import { IsDateString, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 import { FollowUpType } from '../../common/enums';
 
 export class UpdateSeguimientoDto {
@@ -16,8 +23,9 @@ export class UpdateSeguimientoDto {
   occurredAt?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
   @IsDateString()
-  nextActionAt?: string;
+  nextActionAt?: string | null;
 
   @IsOptional()
   @IsEnum(FollowUpType)
