@@ -16,14 +16,6 @@ export function isNextActionFulfilled(
 ): boolean {
   const nextMs = nextActionAt.getTime();
 
-  const markedOnCalendar = followUps.some(
-    (f) =>
-      f.nextActionAt &&
-      new Date(f.nextActionAt).getTime() === nextMs &&
-      (f.description?.includes('[Contacto realizado]') ?? false),
-  );
-  if (markedOnCalendar) return true;
-
   const contactAfter = followUps.some(
     (f) => new Date(f.occurredAt).getTime() >= nextMs,
   );
@@ -35,6 +27,7 @@ export function isNextActionFulfilled(
 export function buildFollowUpSummary(
   followUps: FollowUp[] | undefined,
   fulfilledAt: Date[] = [],
+  clientNextContactAt: Date | null = null,
 ): FollowUpSummary {
   const list = followUps ?? [];
   const sorted = [...list].sort(
@@ -49,21 +42,30 @@ export function buildFollowUpSummary(
     daysSinceLastFollowUp = Math.max(0, Math.floor(diff / 86400000));
   }
 
-  const pendingNextMs = list
-    .filter((f) => f.nextActionAt)
-    .map((f) => new Date(f.nextActionAt!))
-    .filter((nextDate) => !isNextActionFulfilled(nextDate, list, fulfilledAt))
-    .map((d) => d.getTime());
+  let nextDate: Date | null = null;
 
-  const upcoming = pendingNextMs
-    .filter((ms) => ms >= now.getTime())
-    .sort((a, b) => a - b);
-  const overdueNext = pendingNextMs
-    .filter((ms) => ms < now.getTime())
-    .sort((a, b) => b - a);
+  if (clientNextContactAt) {
+    const at = new Date(clientNextContactAt);
+    if (!isNextActionFulfilled(at, list, fulfilledAt)) {
+      nextDate = at;
+    }
+  } else {
+    const pendingNextMs = list
+      .filter((f) => f.nextActionAt)
+      .map((f) => new Date(f.nextActionAt!))
+      .filter((nextDate) => !isNextActionFulfilled(nextDate, list, fulfilledAt))
+      .map((d) => d.getTime());
 
-  const nextMs = upcoming[0] ?? overdueNext[0] ?? null;
-  const nextDate = nextMs !== null ? new Date(nextMs) : null;
+    const upcoming = pendingNextMs
+      .filter((ms) => ms >= now.getTime())
+      .sort((a, b) => a - b);
+    const overdueNext = pendingNextMs
+      .filter((ms) => ms < now.getTime())
+      .sort((a, b) => b - a);
+
+    const nextMs = upcoming[0] ?? overdueNext[0] ?? null;
+    nextDate = nextMs !== null ? new Date(nextMs) : null;
+  }
 
   return {
     lastFollowUpAt: last ? new Date(last.occurredAt).toISOString() : null,

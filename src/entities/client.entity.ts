@@ -33,6 +33,13 @@ export class Client {
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 
+  /** Próximo contacto planificado (a nivel del conjunto, no de un seguimiento). */
+  @Column({ type: 'datetime', nullable: true })
+  nextContactAt: Date | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  nextContactTitle: string | null;
+
   @OneToMany(() => ClientProcess, (cp) => cp.client)
   processes: ClientProcess[];
 

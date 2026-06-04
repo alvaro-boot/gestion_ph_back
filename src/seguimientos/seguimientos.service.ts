@@ -89,7 +89,6 @@ export class SeguimientosService {
       description: dto.description ?? null,
       followUpType: dto.followUpType ?? FollowUpType.NOTE,
       occurredAt: new Date(dto.occurredAt),
-      nextActionAt: dto.nextActionAt ? new Date(dto.nextActionAt) : null,
     });
 
     return this.followUpRepo.save(entity);

@@ -106,7 +106,13 @@ export class ClientsService {
     return map;
   }
 
-  private attachFollowUpSummaryForClient<T extends { id: string; followUps?: FollowUp[] }>(
+  private attachFollowUpSummaryForClient<
+    T extends {
+      id: string;
+      followUps?: FollowUp[];
+      nextContactAt?: Date | null;
+    },
+  >(
     client: T,
     fulfilledByClient: Map<string, Date[]>,
   ): T & { followUpSummary: FollowUpSummary } {
@@ -115,6 +121,7 @@ export class ClientsService {
       followUpSummary: buildFollowUpSummary(
         client.followUps,
         fulfilledByClient.get(client.id) ?? [],
+        client.nextContactAt ?? null,
       ),
     };
   }
@@ -229,7 +236,7 @@ export class ClientsService {
     const [clients, followUps] = await Promise.all([
       this.clientRepo.find({
         where: { id: In(clientIds) },
-        select: { id: true, name: true, company: true },
+        select: { id: true, name: true, company: true, nextContactAt: true },
       }),
       this.followUpRepo.find({
         where: { clientId: In(clientIds) },
@@ -251,6 +258,7 @@ export class ClientsService {
       const summary = buildFollowUpSummary(
         followUpsByClient.get(client.id) ?? [],
         fulfilledByClient.get(client.id) ?? [],
+        client.nextContactAt ? new Date(client.nextContactAt) : null,
       );
       const stale =
         summary.daysSinceLastFollowUp === null ||
@@ -390,20 +398,34 @@ export class ClientsService {
       applyField('notes', dto.notes.trim() || null);
     }
 
-    if (changes.length === 0) {
+    if (dto.nextContactAt !== undefined) {
+      client.nextContactAt = dto.nextContactAt
+        ? new Date(dto.nextContactAt)
+        : null;
+    }
+    if (dto.nextContactTitle !== undefined) {
+      client.nextContactTitle = dto.nextContactTitle?.trim() || null;
+    }
+
+    const contactChanged =
+      dto.nextContactAt !== undefined || dto.nextContactTitle !== undefined;
+
+    if (changes.length === 0 && !contactChanged) {
       return this.findOne(id);
     }
 
     await this.clientRepo.save(client);
 
-    await this.updateLogRepo.save(
-      this.updateLogRepo.create({
-        clientId: id,
-        updatedByUserId: user?.id ?? null,
-        updatedByName: user?.name ?? 'Sistema',
-        changes,
-      }),
-    );
+    if (changes.length > 0) {
+      await this.updateLogRepo.save(
+        this.updateLogRepo.create({
+          clientId: id,
+          updatedByUserId: user?.id ?? null,
+          updatedByName: user?.name ?? 'Sistema',
+          changes,
+        }),
+      );
+    }
 
     return this.findOne(id);
   }
@@ -503,7 +525,11 @@ export class ClientsService {
 
     const fulfilledByClient = await this.getFulfilledDatesByClient([clientId]);
     const fulfilled = fulfilledByClient.get(clientId) ?? [];
-    const followUpSummary = buildFollowUpSummary(followUps, fulfilled);
+    const followUpSummary = buildFollowUpSummary(
+      followUps,
+      fulfilled,
+      client.nextContactAt ? new Date(client.nextContactAt) : null,
+    );
     const now = new Date();
 
     const stageNameForFollowUp = (fu: FollowUp): string | null => {
@@ -527,20 +553,17 @@ export class ClientsService {
       .map((fu) => this.mapFollowUpRow(fu, stageNameForFollowUp(fu)));
 
     const pendingNextContacts: ConjuntoReportNextContact[] = [];
-    for (const fu of followUps) {
-      if (!fu.nextActionAt) continue;
-      const nextAt = new Date(fu.nextActionAt);
-      if (isNextActionFulfilled(nextAt, followUps, fulfilled)) continue;
-      pendingNextContacts.push({
-        followUpId: fu.id,
-        title: fu.title,
-        at: nextAt.toISOString(),
-        overdue: nextAt.getTime() < now.getTime(),
-      });
+    if (client.nextContactAt) {
+      const nextAt = new Date(client.nextContactAt);
+      if (!isNextActionFulfilled(nextAt, followUps, fulfilled)) {
+        pendingNextContacts.push({
+          followUpId: client.id,
+          title: client.nextContactTitle?.trim() || 'Próximo contacto',
+          at: nextAt.toISOString(),
+          overdue: nextAt.getTime() < now.getTime(),
+        });
+      }
     }
-    pendingNextContacts.sort(
-      (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
-    );
 
     const reportProcess =
       processes.find((p) => p.status === ClientProcessStatus.ACTIVE) ??

@@ -28,8 +28,4 @@ export class CreateSeguimientoDto {
 
   @IsDateString()
   occurredAt: string;
-
-  @IsOptional()
-  @IsDateString()
-  nextActionAt?: string;
 }

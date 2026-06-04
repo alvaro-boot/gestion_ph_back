@@ -201,21 +201,20 @@ export class CalendarService {
     return items;
   }
 
-  /** Próximos contactos (pendientes y realizados) en el calendario. */
+  /** Próximo contacto del conjunto (nivel cliente) en el calendario. */
   private async loadNextContactItems(
     start: Date,
     end: Date,
   ): Promise<CalendarMonthItem[]> {
-    const candidates = await this.followUpRepo
-      .createQueryBuilder('fu')
-      .innerJoinAndSelect('fu.client', 'client')
-      .where('fu.nextActionAt IS NOT NULL')
-      .andWhere('fu.nextActionAt <= :end', { end })
+    const clients = await this.clientRepo
+      .createQueryBuilder('c')
+      .where('c.nextContactAt IS NOT NULL')
+      .andWhere('c.nextContactAt <= :end', { end })
       .getMany();
 
-    if (!candidates.length) return [];
+    if (!clients.length) return [];
 
-    const clientIds = [...new Set(candidates.map((c) => c.clientId))];
+    const clientIds = clients.map((c) => c.id);
     const [allFollowUps, fulfilledByClient] = await Promise.all([
       this.followUpRepo.find({ where: { clientId: In(clientIds) } }),
       this.clientsService.getFulfilledDatesByClient(clientIds),
@@ -231,10 +230,10 @@ export class CalendarService {
     const now = new Date();
     const items: CalendarMonthItem[] = [];
 
-    for (const fu of candidates) {
-      const nextAt = new Date(fu.nextActionAt!);
-      const clientFollowUps = followUpsByClient.get(fu.clientId) ?? [];
-      const fulfilled = fulfilledByClient.get(fu.clientId) ?? [];
+    for (const client of clients) {
+      const nextAt = new Date(client.nextContactAt!);
+      const clientFollowUps = followUpsByClient.get(client.id) ?? [];
+      const fulfilled = fulfilledByClient.get(client.id) ?? [];
 
       const done = isNextActionFulfilled(nextAt, clientFollowUps, fulfilled);
 
@@ -247,16 +246,16 @@ export class CalendarService {
       if (nextAt.getTime() > end.getTime()) continue;
 
       items.push({
-        id: fu.id,
+        id: client.id,
         kind: 'next_contact',
-        title: fu.title,
+        title: client.nextContactTitle?.trim() || 'Próximo contacto',
         at: displayAt.toISOString(),
         scheduledAt: nextAt.toISOString(),
         status: done ? 'completed' : overdue ? 'overdue' : 'pending',
-        clientId: fu.clientId,
-        clientName: fu.client?.name ?? '—',
-        processId: fu.clientProcessId,
-        description: fu.description,
+        clientId: client.id,
+        clientName: client.name,
+        processId: null,
+        description: null,
       });
     }
 
