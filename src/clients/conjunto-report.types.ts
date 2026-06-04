@@ -50,6 +50,8 @@ export interface ConjuntoReportMeeting {
   status: string;
   stageName: string | null;
   source: 'stage' | 'followup';
+  activityType?: 'meeting' | 'call' | 'visit' | 'other';
+  notes?: string | null;
 }
 
 export interface ConjuntoReportDelivery {
