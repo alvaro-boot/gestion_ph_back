@@ -27,7 +27,7 @@ import {
   ConjuntoReportProcess,
   ConjuntoReportStage,
 } from './conjunto-report.types';
-import { FollowUpType, StageProgressStatus } from '../common/enums';
+import { StageProgressStatus } from '../common/enums';
 import {
   CalendarEventStatus,
   ClientProcessStatus,
@@ -549,7 +549,7 @@ export class ClientsService {
       : null;
 
     const recentFollowUps = followUps
-      .slice(0, 8)
+      .slice(0, 3)
       .map((fu) => this.mapFollowUpRow(fu, stageNameForFollowUp(fu)));
 
     const pendingNextContacts: ConjuntoReportNextContact[] = [];
@@ -616,80 +616,7 @@ export class ClientsService {
       };
     }
 
-    const processIds = processes.map((p) => p.id);
     const plannedMeetings: ConjuntoReportMeeting[] = [];
-
-    if (processIds.length) {
-      const stageMeetings = await this.meetingRepo
-        .createQueryBuilder('m')
-        .innerJoinAndSelect('m.stageProgress', 'sp')
-        .innerJoinAndSelect('sp.stageTemplate', 'st')
-        .innerJoin('sp.clientProcess', 'cp')
-        .where('cp.id IN (:...ids)', { ids: processIds })
-        .andWhere('m.status != :cancelled', {
-          cancelled: MeetingStatus.CANCELLED,
-        })
-        .orderBy('m.scheduledAt', 'DESC')
-        .getMany();
-
-      for (const m of stageMeetings) {
-        plannedMeetings.push({
-          id: m.id,
-          title: m.title,
-          scheduledAt: new Date(m.scheduledAt).toISOString(),
-          status: m.status,
-          stageName: m.stageProgress?.stageTemplate?.name ?? null,
-          source: 'stage',
-          activityType: 'meeting',
-          notes: m.notes,
-        });
-      }
-    }
-
-    const followUpActivityTypes = new Set<FollowUpType>([
-      FollowUpType.MEETING,
-      FollowUpType.CALL,
-      FollowUpType.VISIT,
-    ]);
-    for (const fu of followUps) {
-      if (!followUpActivityTypes.has(fu.followUpType)) continue;
-      const done =
-        fu.description?.includes('[Realizada]') ||
-        fu.description?.includes('[Contacto realizado]') ||
-        fu.title.startsWith('Cierre:') ||
-        fu.title.startsWith('Contacto realizado');
-      const at = new Date(fu.occurredAt);
-      const status = done
-        ? 'completed'
-        : at.getTime() < now.getTime()
-          ? 'pending'
-          : 'scheduled';
-
-      const activityType =
-        fu.followUpType === FollowUpType.MEETING
-          ? 'meeting'
-          : fu.followUpType === FollowUpType.CALL
-            ? 'call'
-            : fu.followUpType === FollowUpType.VISIT
-              ? 'visit'
-              : 'other';
-
-      plannedMeetings.push({
-        id: fu.id,
-        title: fu.title,
-        scheduledAt: at.toISOString(),
-        status,
-        stageName: stageNameForFollowUp(fu),
-        source: 'followup',
-        activityType,
-        notes: fu.description,
-      });
-    }
-
-    plannedMeetings.sort(
-      (a, b) =>
-        new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime(),
-    );
 
     const calendarRows = await this.eventRepo.find({
       where: { clientId },
