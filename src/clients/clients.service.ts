@@ -47,6 +47,7 @@ export interface AuthUserPayload {
 export interface CalendarClientOption {
   id: string;
   name: string;
+  company: string | null;
   processes: { id: string; name: string }[];
 }
 
@@ -241,6 +242,7 @@ export class ClientsService {
       select: {
         id: true,
         name: true,
+        company: true,
         processes: {
           id: true,
           processTemplate: { name: true },
@@ -254,6 +256,7 @@ export class ClientsService {
       return {
         id: c.id,
         name: c.name,
+        company: c.company ?? null,
         processes:
           filtered.processes?.map((p) => ({
             id: p.id,

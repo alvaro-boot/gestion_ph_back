@@ -19,6 +19,7 @@ import {
   StageProgressStatus,
 } from '../common/enums';
 import { FollowUp } from '../entities/follow-up.entity';
+import { GeneralMeeting } from '../entities/general-meeting.entity';
 import { SeguimientosService } from '../seguimientos/seguimientos.service';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
@@ -49,8 +50,8 @@ export interface CalendarMonthItem {
   stageProgressId?: string | null;
   description?: string | null;
   processKind?: 'onboarding' | 'seguimiento';
-  /** Reunión ligada a etapa de onboarding vs. bitácora post-onboarding */
-  meetingSource?: 'stage' | 'followup';
+  /** Reunión ligada a etapa, bitácora o sin conjunto */
+  meetingSource?: 'stage' | 'followup' | 'general';
   notes?: string | null;
   completionNotes?: string | null;
   /** Fecha original del compromiso (próximo contacto), si se muestra al inicio del mes por vencido */
@@ -84,6 +85,8 @@ export class CalendarService {
     private readonly progressRepo: Repository<StageProgress>,
     @InjectRepository(FollowUp)
     private readonly followUpRepo: Repository<FollowUp>,
+    @InjectRepository(GeneralMeeting)
+    private readonly generalMeetingRepo: Repository<GeneralMeeting>,
     private readonly meetingsService: MeetingsService,
     private readonly clientsService: ClientsService,
     private readonly seguimientosService: SeguimientosService,
@@ -105,8 +108,14 @@ export class CalendarService {
     const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
     const end = new Date(year, month, 0, 23, 59, 59, 999);
 
-    const [meetings, followUpMeetings, deliveries, nextContacts, followUpNextActions] =
-      await Promise.all([
+    const [
+      meetings,
+      generalMeetings,
+      followUpMeetings,
+      deliveries,
+      nextContacts,
+      followUpNextActions,
+    ] = await Promise.all([
       this.meetingRepo
         .createQueryBuilder('m')
         .innerJoinAndSelect('m.stageProgress', 'sp')
@@ -119,6 +128,15 @@ export class CalendarService {
           cancelled: MeetingStatus.CANCELLED,
         })
         .orderBy('m.scheduledAt', 'ASC')
+        .getMany(),
+      this.generalMeetingRepo
+        .createQueryBuilder('gm')
+        .where('gm.scheduledAt >= :start', { start })
+        .andWhere('gm.scheduledAt <= :end', { end })
+        .andWhere('gm.status != :cancelled', {
+          cancelled: MeetingStatus.CANCELLED,
+        })
+        .orderBy('gm.scheduledAt', 'ASC')
         .getMany(),
       this.followUpRepo
         .createQueryBuilder('fu')
@@ -146,6 +164,18 @@ export class CalendarService {
     ]);
 
     const items: CalendarMonthItem[] = [
+      ...generalMeetings.map((gm) => ({
+        id: gm.id,
+        kind: 'meeting' as const,
+        title: gm.title,
+        at: gm.scheduledAt.toISOString(),
+        status: gm.status,
+        clientId: '',
+        clientName: 'Sin conjunto',
+        processId: null,
+        meetingSource: 'general' as const,
+        notes: gm.notes,
+      })),
       ...meetings.map((m) => {
         const template = m.stageProgress?.clientProcess?.processTemplate;
         const processKind =
@@ -419,6 +449,18 @@ export class CalendarService {
   }
 
   async createMeeting(dto: CreateCalendarMeetingDto) {
+    if (!dto.processId) {
+      const entity = this.generalMeetingRepo.create({
+        title: dto.title.trim(),
+        scheduledAt: new Date(dto.scheduledAt),
+        location: dto.location?.trim() || null,
+        notes: dto.notes?.trim() || null,
+        status: MeetingStatus.SCHEDULED,
+      });
+      const meeting = await this.generalMeetingRepo.save(entity);
+      return { meetingSource: 'general' as const, meeting };
+    }
+
     const process = await this.processRepo.findOne({
       where: { id: dto.processId },
       relations: {
@@ -487,10 +529,38 @@ export class CalendarService {
   }
 
   async cancelMeeting(id: string) {
+    const general = await this.generalMeetingRepo.findOne({ where: { id } });
+    if (general) {
+      general.status = MeetingStatus.CANCELLED;
+      return this.generalMeetingRepo.save(general);
+    }
     return this.meetingsService.updateStatus(id, MeetingStatus.CANCELLED);
   }
 
-  updateMeeting(id: string, dto: UpdateMeetingDto) {
+  async updateMeeting(id: string, dto: UpdateMeetingDto) {
+    const general = await this.generalMeetingRepo.findOne({ where: { id } });
+    if (general) {
+      if (general.status === MeetingStatus.CANCELLED) {
+        throw new BadRequestException('Esta reunión ya fue cancelada.');
+      }
+      if (general.status === MeetingStatus.COMPLETED && dto.status !== MeetingStatus.CANCELLED) {
+        throw new BadRequestException('Esta reunión ya fue terminada.');
+      }
+      if (dto.title !== undefined) general.title = dto.title;
+      if (dto.scheduledAt !== undefined) {
+        general.scheduledAt = new Date(dto.scheduledAt);
+      }
+      if (dto.notes !== undefined) general.notes = dto.notes ?? null;
+      if (dto.status !== undefined) {
+        if (dto.status === MeetingStatus.COMPLETED && !dto.notes?.trim()) {
+          throw new BadRequestException(
+            'Indica notas al marcar la reunión como terminada.',
+          );
+        }
+        general.status = dto.status;
+      }
+      return this.generalMeetingRepo.save(general);
+    }
     return this.meetingsService.update(id, dto);
   }
 

@@ -7,8 +7,10 @@ import {
 } from 'class-validator';
 
 export class CreateCalendarMeetingDto {
+  /** Si se omite, se crea una reunión general (sin conjunto). */
+  @IsOptional()
   @IsUUID()
-  processId: string;
+  processId?: string;
 
   /** Si el proceso está activo, puede indicar la etapa; si no, se usa la etapa en curso. */
   @IsOptional()

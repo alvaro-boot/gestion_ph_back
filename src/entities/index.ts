@@ -9,3 +9,4 @@ export { Task } from './task.entity';
 export { FollowUp } from './follow-up.entity';
 export { ClientUpdateLog } from './client-update-log.entity';
 export { CalendarEvent } from './calendar-event.entity';
+export { GeneralMeeting } from './general-meeting.entity';
