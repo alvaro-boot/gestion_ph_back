@@ -684,6 +684,7 @@ export class ClientsService {
           status: e.status,
           eventType: e.eventType as 'client_delivery' | 'internal_delivery',
           description: e.description,
+          unfulfilledReason: e.unfulfilledReason,
           overdue,
         };
       });

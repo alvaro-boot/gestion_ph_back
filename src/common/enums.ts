@@ -41,6 +41,8 @@ export enum CalendarEventStatus {
   ACTIVE = 'active',
   CANCELLED = 'cancelled',
   COMPLETED = 'completed',
+  /** Entrega del cliente no cumplida (solo client_delivery). */
+  UNFULFILLED = 'unfulfilled',
 }
 
 export enum FollowUpType {

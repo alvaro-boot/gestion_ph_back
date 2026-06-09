@@ -61,6 +61,7 @@ export interface ConjuntoReportDelivery {
   status: string;
   eventType: 'client_delivery' | 'internal_delivery';
   description: string | null;
+  unfulfilledReason: string | null;
   overdue: boolean;
 }
 

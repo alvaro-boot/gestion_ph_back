@@ -54,6 +54,7 @@ export interface CalendarMonthItem {
   meetingSource?: 'stage' | 'followup' | 'general';
   notes?: string | null;
   completionNotes?: string | null;
+  unfulfilledReason?: string | null;
   /** Fecha original del compromiso (próximo contacto), si se muestra al inicio del mes por vencido */
   scheduledAt?: string | null;
   /** Próximo contacto a nivel cliente vs. compromiso en un seguimiento (nextActionAt). */
@@ -226,6 +227,7 @@ export class CalendarService {
         processId: e.clientProcessId,
         description: e.description,
         completionNotes: e.completionNotes,
+        unfulfilledReason: e.unfulfilledReason,
       })),
       ...nextContacts,
       ...followUpNextActions,
@@ -419,12 +421,21 @@ export class CalendarService {
     ) {
       throw new BadRequestException('Esta entrega ya fue terminada.');
     }
+    if (
+      event.status === CalendarEventStatus.UNFULFILLED &&
+      dto.status !== CalendarEventStatus.CANCELLED
+    ) {
+      throw new BadRequestException('Esta entrega ya fue marcada como incumplida.');
+    }
 
     if (dto.title !== undefined) event.title = dto.title;
     if (dto.description !== undefined) event.description = dto.description ?? null;
     if (dto.dueAt !== undefined) event.dueAt = new Date(dto.dueAt);
     if (dto.completionNotes !== undefined) {
       event.completionNotes = dto.completionNotes ?? null;
+    }
+    if (dto.unfulfilledReason !== undefined) {
+      event.unfulfilledReason = dto.unfulfilledReason ?? null;
     }
     if (dto.status !== undefined) {
       if (
@@ -434,6 +445,23 @@ export class CalendarService {
         throw new BadRequestException(
           'Indica notas al marcar la entrega como terminada.',
         );
+      }
+      if (dto.status === CalendarEventStatus.UNFULFILLED) {
+        if (event.eventType !== CalendarEventType.CLIENT_DELIVERY) {
+          throw new BadRequestException(
+            'Solo las entregas del cliente pueden marcarse como incumplidas.',
+          );
+        }
+        if (!dto.unfulfilledReason?.trim()) {
+          throw new BadRequestException(
+            'Indica el motivo del incumplimiento por parte del cliente.',
+          );
+        }
+        event.unfulfilledReason = dto.unfulfilledReason.trim();
+        event.completionNotes = null;
+      }
+      if (dto.status === CalendarEventStatus.COMPLETED) {
+        event.unfulfilledReason = null;
       }
       event.status = dto.status;
     }

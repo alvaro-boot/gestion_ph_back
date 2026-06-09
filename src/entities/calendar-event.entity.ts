@@ -41,6 +41,10 @@ export class CalendarEvent {
   @Column({ type: 'text', nullable: true })
   completionNotes: string | null;
 
+  /** Motivo cuando el cliente no cumple la entrega (status unfulfilled). */
+  @Column({ type: 'text', nullable: true })
+  unfulfilledReason: string | null;
+
   @Column({ type: 'datetime' })
   dueAt: Date;
 
